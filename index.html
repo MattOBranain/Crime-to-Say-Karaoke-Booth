@@ -3,187 +3,63 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Crime to Say - Karaoke Challenge</title>
+  <title>Crime to Say Karaoke Challenge</title>
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       max-width: 480px;
       margin: 0 auto;
-      padding: 20px 16px;
+      padding: 24px 16px 40px;
       text-align: center;
-      background: #0f0f0f;
+      background: #03C04A;
       color: white;
       min-height: 100vh;
+      line-height: 1.45;
     }
-    h1 { margin: 10px 0 5px; font-size: 28px; }
-    p { margin: 6px 0; opacity: 0.85; }
+    h1 {
+      font-size: 26px;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+    .instructions {
+      font-size: 17px;
+      margin-bottom: 18px;
+      opacity: 0.95;
+    }
     #preview {
       width: 100%;
-      max-width: 400px;
+      max-width: 380px;
       aspect-ratio: 3/4;
-      background: #222;
+      background: #111;
       border-radius: 16px;
-      margin: 20px auto;
+      margin: 0 auto 16px;
       object-fit: cover;
       transform: scaleX(-1);
       display: block;
+      border: 3px solid white;
     }
     #status {
       margin: 12px 0 20px;
       font-size: 16px;
       min-height: 24px;
-      color: #fbbf24;
+      font-weight: 600;
     }
     .buttons {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
       gap: 12px;
-      margin-top: 10px;
+      margin-bottom: 30px;
     }
     button, a.btn {
-      background: #e11d48;
+      background: #03C04A;
       color: white;
-      border: none;
-      padding: 14px 26px;
+      border: 2px solid white;
+      padding: 13px 24px;
       font-size: 16px;
       border-radius: 50px;
       cursor: pointer;
       text-decoration: none;
       display: inline-block;
-    }
-    button:disabled {
-      background: #444;
-      cursor: not-allowed;
-    }
-    #downloadBtn {
-      background: #16a34a;
-      display: none;
-    }
-  </style>
-</head>
-<body>
-  <h1>Crime to Say</h1>
-  <p>Karaoke Challenge</p>
-  <p>Allow camera & microphone, then press Record</p>
-
-  <video id="preview" autoplay muted playsinline></video>
-
-  <div id="status">Loading camera...</div>
-
-  <div class="buttons">
-    <button id="recordBtn">● Record</button>
-    <button id="stopBtn" disabled>Stop</button>
-    <a id="downloadBtn" class="btn">Download Video</a>
-  </div>
-
-  <script>
-    const preview = document.getElementById('preview');
-    const recordBtn = document.getElementById('recordBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const status = document.getElementById('status');
-
-    let mediaRecorder;
-    let recordedChunks = [];
-    let audioContext;
-    let micStream;
-    let audioElement;
-
-    // Try both possible filenames
-    audioElement = new Audio('Crime%20to%20Say%20Oke%20Challenge.mp3');
-    audioElement.crossOrigin = "anonymous";
-
-    async function startCamera() {
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
-          audio: true
-        });
-        preview.srcObject = micStream;
-        status.textContent = 'Ready – press Record';
-      } catch (err) {
-        status.textContent = 'Camera/mic error: ' + err.message;
-        console.error(err);
-      }
-    }
-
-    startCamera();
-
-    recordBtn.onclick = async () => {
-      if (!micStream) {
-        status.textContent = 'Camera not ready';
-        return;
-      }
-
-      recordedChunks = [];
-      status.textContent = 'Starting...';
-
-      try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
-
-        const musicSource = audioContext.createMediaElementSource(audioElement);
-        const musicGain = audioContext.createGain();
-        musicGain.gain.value = 0.7;
-        musicSource.connect(musicGain);
-
-        const micSource = audioContext.createMediaStreamSource(micStream);
-        const micGain = audioContext.createGain();
-        micGain.gain.value = 1.5;
-        micSource.connect(micGain);
-
-        const destination = audioContext.createMediaStreamDestination();
-        musicGain.connect(destination);
-        micGain.connect(destination);
-
-        const videoTrack = micStream.getVideoTracks()[0];
-        const mixedStream = new MediaStream([
-          videoTrack,
-          ...destination.stream.getAudioTracks()
-        ]);
-
-        mediaRecorder = new MediaRecorder(mixedStream);
-
-        mediaRecorder.ondataavailable = e => {
-          if (e.data.size > 0) recordedChunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(recordedChunks, { type: 'video/webm' });
-          const url = URL.createObjectURL(blob);
-          downloadBtn.href = url;
-          downloadBtn.download = 'Crime-to-Say-singing.webm';
-          downloadBtn.style.display = 'inline-block';
-          status.textContent = 'Done! Download your video';
-          audioElement.pause();
-          audioElement.currentTime = 0;
-        };
-
-        audioElement.currentTime = 0;
-        await audioElement.play();
-        mediaRecorder.start(100);
-
-        recordBtn.disabled = true;
-        stopBtn.disabled = false;
-        status.textContent = 'Recording... sing now!';
-
-      } catch (err) {
-        status.textContent = 'Error: ' + err.message;
-        console.error(err);
-      }
-    };
-
-    stopBtn.onclick = () => {
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-      }
-      recordBtn.disabled = false;
-      stopBtn.disabled = true;
-    };
-  </script>
-</body>
-</html>
+      font-weight: 
