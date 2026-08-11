@@ -17,11 +17,11 @@
     }
     h1 {
       font-size: 26px;
-      margin: 0 0 10px 0;
+      margin: 0 0 8px 0;
     }
     .instructions {
       font-size: 17px;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
     #preview {
       width: 100%;
@@ -29,7 +29,7 @@
       height: 480px;
       background: #111;
       border-radius: 16px;
-      margin: 0 auto 15px;
+      margin: 0 auto 14px;
       object-fit: cover;
       transform: scaleX(-1);
       border: 3px solid white;
@@ -38,7 +38,7 @@
     #status {
       font-size: 16px;
       font-weight: 600;
-      margin: 12px 0 20px;
+      margin: 10px 0 18px;
       min-height: 24px;
     }
     .btn-row {
@@ -60,7 +60,7 @@
       text-decoration: none;
     }
     button:disabled {
-      opacity: 0.5;
+      opacity: 0.45;
       cursor: not-allowed;
     }
     #downloadBtn {
@@ -69,8 +69,8 @@
     .legal {
       font-size: 13px;
       text-align: left;
-      margin-top: 30px;
-      padding-top: 20px;
+      margin-top: 25px;
+      padding-top: 18px;
       border-top: 1px solid rgba(255,255,255,0.5);
       line-height: 1.5;
     }
@@ -80,7 +80,7 @@
     }
     .cc {
       font-size: 12px;
-      margin-top: 20px;
+      margin-top: 18px;
       text-align: center;
       opacity: 0.9;
     }
@@ -93,10 +93,11 @@
 
   <video id="preview" autoplay muted playsinline></video>
 
-  <div id="status">Loading camera...</div>
+  <div id="status">Click “Enable Camera” to begin</div>
 
   <div class="btn-row">
-    <button id="recordBtn">🔴 Record</button>
+    <button id="enableBtn">Enable Camera</button>
+    <button id="recordBtn" disabled>🔴 Record</button>
     <button id="stopBtn" disabled>Stop</button>
     <a id="downloadBtn" class="btn">Download Video</a>
   </div>
@@ -108,8 +109,7 @@
     If you do experience any legal issues resulting from joining this truth-telling trend, please email <a href="mailto:info@defendourjuries.org">info@defendourjuries.org</a> for support.'</p>
 
     <p style="margin-top: 14px;">
-      For other enquiries or collaborations contact Matt Ó Branáin<br>
-      (<a href="mailto:matt.o.branain@protonmail.com">matt.o.branain@protonmail.com</a>).
+      For other enquiries or collaborations, contact Matt Ó Branáin via @MattOBranain.
     </p>
   </div>
 
@@ -119,4 +119,116 @@
     Commercial use requires permission.
   </div>
 
-  <script
+  <script>
+    const preview = document.getElementById('preview');
+    const enableBtn = document.getElementById('enableBtn');
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const status = document.getElementById('status');
+
+    let mediaRecorder;
+    let recordedChunks = [];
+    let audioContext;
+    let micStream;
+    let audioElement;
+
+    audioElement = new Audio('Crime%20to%20Say%20Oke%20Challenge.mp3');
+    audioElement.preload = 'auto';
+
+    enableBtn.onclick = async () => {
+      status.textContent = 'Requesting camera & microphone...';
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: true
+        });
+        preview.srcObject = micStream;
+        status.textContent = 'Ready – press Record';
+        enableBtn.style.display = 'none';
+        recordBtn.disabled = false;
+      } catch (err) {
+        status.textContent = 'Camera error: ' + err.message + ' (check browser permissions)';
+        console.error(err);
+      }
+    };
+
+    recordBtn.onclick = async () => {
+      if (!micStream) {
+        status.textContent = 'Please enable the camera first';
+        return;
+      }
+
+      recordedChunks = [];
+      downloadBtn.style.display = 'none';
+      status.textContent = 'Starting...';
+
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        await audioContext.resume();
+
+        // Music
+        const musicSource = audioContext.createMediaElementSource(audioElement);
+        const musicGain = audioContext.createGain();
+        musicGain.gain.value = 0.85;
+        musicSource.connect(musicGain);
+        musicGain.connect(audioContext.destination); // Hear the music
+
+        // Mic
+        const micSource = audioContext.createMediaStreamSource(micStream);
+        const micGain = audioContext.createGain();
+        micGain.gain.value = 1.6;
+        micSource.connect(micGain);
+
+        // Mix for recording
+        const destination = audioContext.createMediaStreamDestination();
+        musicGain.connect(destination);
+        micGain.connect(destination);
+
+        const mixedStream = new MediaStream([
+          micStream.getVideoTracks()[0],
+          ...destination.stream.getAudioTracks()
+        ]);
+
+        mediaRecorder = new MediaRecorder(mixedStream);
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          downloadBtn.href = url;
+          downloadBtn.download = 'Crime-to-Say-Karaoke.webm';
+          downloadBtn.style.display = 'inline-block';
+          status.textContent = 'Done! Download your video';
+          audioElement.pause();
+          audioElement.currentTime = 0;
+        };
+
+        // Play the song
+        audioElement.currentTime = 0;
+        await audioElement.play();
+
+        mediaRecorder.start(100);
+        recordBtn.disabled = true;
+        stopBtn.disabled = false;
+        status.textContent = 'Recording... sing along!';
+
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        console.error(err);
+      }
+    };
+
+    stopBtn.onclick = () => {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>
