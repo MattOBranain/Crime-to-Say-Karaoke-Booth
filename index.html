@@ -3,52 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sing Along</title>
+  <title>Crime to Say - Karaoke Challenge</title>
   <style>
     body {
       font-family: system-ui, sans-serif;
-      max-width: 500px;
-      margin: 20px auto;
-      padding: 0 15px;
+      max-width: 520px;
+      margin: 30px auto;
+      padding: 0 16px;
       text-align: center;
       background: #111;
       color: white;
     }
     video {
       width: 100%;
-      max-width: 400px;
-      border-radius: 12px;
+      max-width: 420px;
+      border-radius: 14px;
       background: #000;
-      transform: scaleX(-1); /* mirror selfie */
+      transform: scaleX(-1);
     }
-    button {
+    button, a.button {
       background: #e11d48;
       color: white;
       border: none;
       padding: 14px 28px;
-      font-size: 18px;
+      font-size: 17px;
       border-radius: 50px;
       margin: 10px 6px;
       cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
     }
     button:disabled {
       background: #555;
       cursor: not-allowed;
     }
-    #status {
-      margin: 15px 0;
-      font-size: 16px;
-      min-height: 24px;
-    }
     #downloadBtn {
       background: #16a34a;
       display: none;
     }
+    #status {
+      margin: 18px 0;
+      font-size: 16px;
+      min-height: 24px;
+    }
   </style>
 </head>
 <body>
-  <h1>Sing Along</h1>
-  <p>Allow camera & mic, then press Record</p>
+  <h1>Crime to Say</h1>
+  <p>Karaoke Challenge</p>
+  <p>Allow camera & microphone, then press Record</p>
 
   <video id="preview" autoplay muted playsinline></video>
 
@@ -57,7 +60,7 @@
   <button id="recordBtn">● Record</button>
   <button id="stopBtn" disabled>Stop</button>
   <br>
-  <button id="downloadBtn">Download Video</button>
+  <a id="downloadBtn" class="button">Download Video</a>
 
   <script>
     const preview = document.getElementById('preview');
@@ -69,13 +72,11 @@
     let mediaRecorder;
     let recordedChunks = [];
     let audioContext;
-    let musicSource;
     let micStream;
-    let mixedStream;
     let audioElement;
 
-    // Load the music
-    audioElement = new Audio('track.mp3');
+    // IMPORTANT: use the exact filename of your mp3
+    audioElement = new Audio('Crime to Say Oke Challenge.mp3');
     audioElement.crossOrigin = "anonymous";
 
     async function startCamera() {
@@ -94,65 +95,38 @@
 
     recordBtn.onclick = async () => {
       recordedChunks = [];
-      status.textContent = 'Recording...';
+      status.textContent = 'Starting...';
 
-      // Create audio context for mixing
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      
-      // Music source
-      const musicTrack = audioContext.createMediaElementSource(audioElement);
-      const musicGain = audioContext.createGain();
-      musicGain.gain.value = 0.7; // music volume
-      musicTrack.connect(musicGain);
+      try {
+        // Resume AudioContext (needed on Safari / Mac)
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
 
-      // Mic source
-      const micSource = audioContext.createMediaStreamSource(micStream);
-      const micGain = audioContext.createGain();
-      micGain.gain.value = 1.3; // voice a bit louder
-      micSource.connect(micGain);
+        // Music
+        const musicSource = audioContext.createMediaElementSource(audioElement);
+        const musicGain = audioContext.createGain();
+        musicGain.gain.value = 0.75;
+        musicSource.connect(musicGain);
 
-      // Mix them
-      const destination = audioContext.createMediaStreamDestination();
-      musicGain.connect(destination);
-      micGain.connect(destination);
+        // Microphone
+        const micSource = audioContext.createMediaStreamSource(micStream);
+        const micGain = audioContext.createGain();
+        micGain.gain.value = 1.4;
+        micSource.connect(micGain);
 
-      // Combine video from camera + mixed audio
-      const videoTrack = micStream.getVideoTracks()[0];
-      mixedStream = new MediaStream([videoTrack, ...destination.stream.getAudioTracks()]);
+        // Mix
+        const destination = audioContext.createMediaStreamDestination();
+        musicGain.connect(destination);
+        micGain.connect(destination);
 
-      mediaRecorder = new MediaRecorder(mixedStream, {
-        mimeType: 'video/webm;codecs=vp9,opus'
-      });
+        // Combined stream (camera video + mixed audio)
+        const videoTrack = micStream.getVideoTracks()[0];
+        const mixedStream = new MediaStream([
+          videoTrack,
+          ...destination.stream.getAudioTracks()
+        ]);
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) recordedChunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        downloadBtn.href = url;
-        downloadBtn.download = 'my-singing.webm';
-        downloadBtn.style.display = 'inline-block';
-        status.textContent = 'Done! Download your video';
-        audioElement.pause();
-        audioElement.currentTime = 0;
-      };
-
-      // Start music and recording together
-      audioElement.currentTime = 0;
-      audioElement.play();
-      mediaRecorder.start();
-
-      recordBtn.disabled = true;
-      stopBtn.disabled = false;
-    };
-
-    stopBtn.onclick = () => {
-      mediaRecorder.stop();
-      recordBtn.disabled = false;
-      stopBtn.disabled = true;
-    };
-  </script>
-</body>
-</html>
+        mediaRecorder = new MediaRecorder(mixedStream, {
+          mimeType: 'video/webm;codecs=vp9,
