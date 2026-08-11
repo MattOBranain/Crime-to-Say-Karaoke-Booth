@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sing Along</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 500px;
+      margin: 20px auto;
+      padding: 0 15px;
+      text-align: center;
+      background: #111;
+      color: white;
+    }
+    video {
+      width: 100%;
+      max-width: 400px;
+      border-radius: 12px;
+      background: #000;
+      transform: scaleX(-1); /* mirror selfie */
+    }
+    button {
+      background: #e11d48;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 18px;
+      border-radius: 50px;
+      margin: 10px 6px;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    #status {
+      margin: 15px 0;
+      font-size: 16px;
+      min-height: 24px;
+    }
+    #downloadBtn {
+      background: #16a34a;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sing Along</h1>
+  <p>Allow camera & mic, then press Record</p>
+
+  <video id="preview" autoplay muted playsinline></video>
+
+  <div id="status">Ready</div>
+
+  <button id="recordBtn">● Record</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <br>
+  <button id="downloadBtn">Download Video</button>
+
+  <script>
+    const preview = document.getElementById('preview');
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const status = document.getElementById('status');
+
+    let mediaRecorder;
+    let recordedChunks = [];
+    let audioContext;
+    let musicSource;
+    let micStream;
+    let mixedStream;
+    let audioElement;
+
+    // Load the music
+    audioElement = new Audio('track.mp3');
+    audioElement.crossOrigin = "anonymous";
+
+    async function startCamera() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: true
+        });
+        preview.srcObject = micStream;
+      } catch (err) {
+        status.textContent = 'Camera/mic error: ' + err.message;
+      }
+    }
+
+    startCamera();
+
+    recordBtn.onclick = async () => {
+      recordedChunks = [];
+      status.textContent = 'Recording...';
+
+      // Create audio context for mixing
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // Music source
+      const musicTrack = audioContext.createMediaElementSource(audioElement);
+      const musicGain = audioContext.createGain();
+      musicGain.gain.value = 0.7; // music volume
+      musicTrack.connect(musicGain);
+
+      // Mic source
+      const micSource = audioContext.createMediaStreamSource(micStream);
+      const micGain = audioContext.createGain();
+      micGain.gain.value = 1.3; // voice a bit louder
+      micSource.connect(micGain);
+
+      // Mix them
+      const destination = audioContext.createMediaStreamDestination();
+      musicGain.connect(destination);
+      micGain.connect(destination);
+
+      // Combine video from camera + mixed audio
+      const videoTrack = micStream.getVideoTracks()[0];
+      mixedStream = new MediaStream([videoTrack, ...destination.stream.getAudioTracks()]);
+
+      mediaRecorder = new MediaRecorder(mixedStream, {
+        mimeType: 'video/webm;codecs=vp9,opus'
+      });
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        downloadBtn.href = url;
+        downloadBtn.download = 'my-singing.webm';
+        downloadBtn.style.display = 'inline-block';
+        status.textContent = 'Done! Download your video';
+        audioElement.pause();
+        audioElement.currentTime = 0;
+      };
+
+      // Start music and recording together
+      audioElement.currentTime = 0;
+      audioElement.play();
+      mediaRecorder.start();
+
+      recordBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>
