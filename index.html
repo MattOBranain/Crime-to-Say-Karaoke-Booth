@@ -5,61 +5,118 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Crime to Say Karaoke Challenge</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       max-width: 480px;
       margin: 0 auto;
-      padding: 24px 16px 40px;
+      padding: 24px 16px 50px;
       text-align: center;
-      background: #03C04A;
+      background-color: #03C04A;
       color: white;
-      min-height: 100vh;
-      line-height: 1.45;
+      line-height: 1.4;
     }
     h1 {
       font-size: 26px;
-      margin-bottom: 8px;
-      font-weight: 700;
+      margin: 0 0 10px 0;
     }
     .instructions {
       font-size: 17px;
-      margin-bottom: 18px;
-      opacity: 0.95;
+      margin-bottom: 20px;
     }
     #preview {
       width: 100%;
-      max-width: 380px;
-      aspect-ratio: 3/4;
+      max-width: 360px;
+      height: 480px;
       background: #111;
       border-radius: 16px;
-      margin: 0 auto 16px;
+      margin: 0 auto 15px;
       object-fit: cover;
       transform: scaleX(-1);
-      display: block;
       border: 3px solid white;
+      display: block;
     }
     #status {
-      margin: 12px 0 20px;
       font-size: 16px;
-      min-height: 24px;
       font-weight: 600;
+      margin: 12px 0 20px;
+      min-height: 24px;
     }
-    .buttons {
+    .btn-row {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
       gap: 12px;
       margin-bottom: 30px;
     }
-    button, a.btn {
-      background: #03C04A;
+    button, .btn {
+      background-color: #03C04A;
       color: white;
       border: 2px solid white;
-      padding: 13px 24px;
+      padding: 14px 24px;
       font-size: 16px;
       border-radius: 50px;
       cursor: pointer;
+      font-weight: 600;
       text-decoration: none;
-      display: inline-block;
-      font-weight: 
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #downloadBtn {
+      display: none;
+    }
+    .legal {
+      font-size: 13px;
+      text-align: left;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255,255,255,0.5);
+      line-height: 1.5;
+    }
+    .legal a {
+      color: white;
+      text-decoration: underline;
+    }
+    .cc {
+      font-size: 12px;
+      margin-top: 20px;
+      text-align: center;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Crime to Say Karaoke Challenge</h1>
+  <p class="instructions">Record, sing & save!<br>Then post or DM @MattOBranain.</p>
+
+  <video id="preview" autoplay muted playsinline></video>
+
+  <div id="status">Loading camera...</div>
+
+  <div class="btn-row">
+    <button id="recordBtn">🔴 Record</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <a id="downloadBtn" class="btn">Download Video</a>
+  </div>
+
+  <div class="legal">
+    <p><strong>IMPORTANT note from Defend Our Juries legal advisors:</strong><br>
+    'Replicating this video (song) comes with potential, but unlikely, risk of arrest.<br>
+    It is not illegal to publicly state the law, as this video (song) is doing. It is also not illegal to campaign for the de-proscription of a group.<br>
+    If you do experience any legal issues resulting from joining this truth-telling trend, please email <a href="mailto:info@defendourjuries.org">info@defendourjuries.org</a> for support.'</p>
+
+    <p style="margin-top: 14px;">
+      For other enquiries or collaborations contact Matt Ó Branáin<br>
+      (<a href="mailto:matt.o.branain@protonmail.com">matt.o.branain@protonmail.com</a>).
+    </p>
+  </div>
+
+  <div class="cc">
+    Licensed under Creative Commons BY-NC 4.0<br>
+    Free to share and create non-commercial derivatives (with credit).<br>
+    Commercial use requires permission.
+  </div>
+
+  <script
