@@ -5,46 +5,61 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Crime to Say - Karaoke Challenge</title>
   <style>
+    * { box-sizing: border-box; }
     body {
-      font-family: system-ui, sans-serif;
-      max-width: 520px;
-      margin: 30px auto;
-      padding: 0 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 20px 16px;
       text-align: center;
-      background: #111;
+      background: #0f0f0f;
       color: white;
+      min-height: 100vh;
     }
-    video {
+    h1 { margin: 10px 0 5px; font-size: 28px; }
+    p { margin: 6px 0; opacity: 0.85; }
+    #preview {
       width: 100%;
-      max-width: 420px;
-      border-radius: 14px;
-      background: #000;
+      max-width: 400px;
+      aspect-ratio: 3/4;
+      background: #222;
+      border-radius: 16px;
+      margin: 20px auto;
+      object-fit: cover;
       transform: scaleX(-1);
+      display: block;
     }
-    button, a.button {
+    #status {
+      margin: 12px 0 20px;
+      font-size: 16px;
+      min-height: 24px;
+      color: #fbbf24;
+    }
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    button, a.btn {
       background: #e11d48;
       color: white;
       border: none;
-      padding: 14px 28px;
-      font-size: 17px;
+      padding: 14px 26px;
+      font-size: 16px;
       border-radius: 50px;
-      margin: 10px 6px;
       cursor: pointer;
       text-decoration: none;
       display: inline-block;
     }
     button:disabled {
-      background: #555;
+      background: #444;
       cursor: not-allowed;
     }
     #downloadBtn {
       background: #16a34a;
       display: none;
-    }
-    #status {
-      margin: 18px 0;
-      font-size: 16px;
-      min-height: 24px;
     }
   </style>
 </head>
@@ -55,12 +70,13 @@
 
   <video id="preview" autoplay muted playsinline></video>
 
-  <div id="status">Ready</div>
+  <div id="status">Loading camera...</div>
 
-  <button id="recordBtn">● Record</button>
-  <button id="stopBtn" disabled>Stop</button>
-  <br>
-  <a id="downloadBtn" class="button">Download Video</a>
+  <div class="buttons">
+    <button id="recordBtn">● Record</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <a id="downloadBtn" class="btn">Download Video</a>
+  </div>
 
   <script>
     const preview = document.getElementById('preview');
@@ -75,8 +91,8 @@
     let micStream;
     let audioElement;
 
-    // IMPORTANT: use the exact filename of your mp3
-    audioElement = new Audio('Crime to Say Oke Challenge.mp3');
+    // Try both possible filenames
+    audioElement = new Audio('Crime%20to%20Say%20Oke%20Challenge.mp3');
     audioElement.crossOrigin = "anonymous";
 
     async function startCamera() {
@@ -86,47 +102,88 @@
           audio: true
         });
         preview.srcObject = micStream;
+        status.textContent = 'Ready – press Record';
       } catch (err) {
         status.textContent = 'Camera/mic error: ' + err.message;
+        console.error(err);
       }
     }
 
     startCamera();
 
     recordBtn.onclick = async () => {
+      if (!micStream) {
+        status.textContent = 'Camera not ready';
+        return;
+      }
+
       recordedChunks = [];
       status.textContent = 'Starting...';
 
       try {
-        // Resume AudioContext (needed on Safari / Mac)
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         if (audioContext.state === 'suspended') {
           await audioContext.resume();
         }
 
-        // Music
         const musicSource = audioContext.createMediaElementSource(audioElement);
         const musicGain = audioContext.createGain();
-        musicGain.gain.value = 0.75;
+        musicGain.gain.value = 0.7;
         musicSource.connect(musicGain);
 
-        // Microphone
         const micSource = audioContext.createMediaStreamSource(micStream);
         const micGain = audioContext.createGain();
-        micGain.gain.value = 1.4;
+        micGain.gain.value = 1.5;
         micSource.connect(micGain);
 
-        // Mix
         const destination = audioContext.createMediaStreamDestination();
         musicGain.connect(destination);
         micGain.connect(destination);
 
-        // Combined stream (camera video + mixed audio)
         const videoTrack = micStream.getVideoTracks()[0];
         const mixedStream = new MediaStream([
           videoTrack,
           ...destination.stream.getAudioTracks()
         ]);
 
-        mediaRecorder = new MediaRecorder(mixedStream, {
-          mimeType: 'video/webm;codecs=vp9,
+        mediaRecorder = new MediaRecorder(mixedStream);
+
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          downloadBtn.href = url;
+          downloadBtn.download = 'Crime-to-Say-singing.webm';
+          downloadBtn.style.display = 'inline-block';
+          status.textContent = 'Done! Download your video';
+          audioElement.pause();
+          audioElement.currentTime = 0;
+        };
+
+        audioElement.currentTime = 0;
+        await audioElement.play();
+        mediaRecorder.start(100);
+
+        recordBtn.disabled = true;
+        stopBtn.disabled = false;
+        status.textContent = 'Recording... sing now!';
+
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        console.error(err);
+      }
+    };
+
+    stopBtn.onclick = () => {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>
