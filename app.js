@@ -5,6 +5,9 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let stream = null;
 let animationFrameId;
+let audioContext = null;
+let backingTrackSource = null;
+let backingTrackAudio = null;
 
 const previewVideo = document.getElementById('preview');
 const canvas = document.getElementById('processing-canvas');
@@ -51,12 +54,37 @@ function drawLoop() {
     animationFrameId = requestAnimationFrame(drawLoop);
 }
 
-// 3. Start Recording
+// 3. Start Recording (With Audio Mixing)
 async function startRecording() {
     recordedChunks = [];
+    
+    // Create Audio Context for mixing
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // 1. Create destination for the mixed audio (Mic + Backing Track)
+    const mixedDestination = audioContext.createMediaStreamDestination();
+    
+    // 2. Connect Microphone to the mix
+    const micSource = audioContext.createMediaStreamSource(stream);
+    micSource.connect(mixedDestination);
+    
+    // 3. Load and Connect Backing Track
+    backingTrackAudio = new Audio('crime-to-say-oke-challenge.mp3'); // Ensure filename matches your renamed file
+    backingTrackAudio.crossOrigin = "anonymous";
+    const trackSource = audioContext.createMediaElementSource(backingTrackAudio);
+    trackSource.connect(mixedDestination);
+    
+    // Optional: Connect to destination so YOU can hear it while recording
+    trackSource.connect(audioContext.destination); 
+    micSource.connect(audioContext.destination); 
+
+    // 4. Create Canvas Stream (Video)
     const canvasStream = canvas.captureStream(30);
-    const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) canvasStream.addTrack(audioTrack);
+    
+    // 5. Replace Canvas Audio Track with Mixed Audio Track
+    const mixedAudioTrack = mixedDestination.stream.getAudioTracks()[0];
+    canvasStream.removeTrack(canvasStream.getAudioTracks()[0]); // Remove original mic track
+    canvasStream.addTrack(mixedAudioTrack); // Add mixed track
 
     // Detect Format
     let mimeType = '';
@@ -75,6 +103,10 @@ async function startRecording() {
         const blob = new Blob(recordedChunks, { type: mimeType });
         const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
         
+        // Stop backing track
+        backingTrackAudio.pause();
+        backingTrackAudio.currentTime = 0;
+        
         if (ext === 'mp4') {
             downloadFile(blob, `crime-to-say-${Date.now()}.mp4`);
             statusDiv.innerText = "Done! (MP4)";
@@ -86,7 +118,10 @@ async function startRecording() {
         drawLoop();
     };
 
+    // Start Recording AND Play Audio simultaneously
     mediaRecorder.start();
+    backingTrackAudio.play();
+    
     startBtn.disabled = true;
     stopBtn.disabled = false;
     statusDiv.innerText = "Recording...";
@@ -95,8 +130,6 @@ async function startRecording() {
 // 4. Convert WebM to MP4 (Client-Side)
 async function convertToMp4(webmBlob) {
     const ffmpeg = new FFmpeg();
-    
-    // Load Multi-Threaded Core (Fast, requires Netlify headers)
     const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/umd';
     try {
         await ffmpeg.load({
