@@ -10,6 +10,9 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let audioContext = null;
 let backingTrackAudio = null;
+let ffmpegReady = false;
+let recordingStartTime = 0;
+let recordingDuration = 0;
 
 // DOM Elements
 const preview = document.getElementById('preview');
@@ -18,6 +21,31 @@ const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const statusDiv = document.getElementById('status');
 const processingCanvas = document.getElementById('processing-canvas');
+
+// ============================================
+// 0. FFMPEG INITIALIZATION
+// ============================================
+async function initFFmpeg() {
+    try {
+        const { FFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = new FFmpeg.FFmpeg();
+        
+        statusDiv.innerText = "Loading FFmpeg...";
+        
+        if (!ffmpeg.isLoaded()) {
+            await ffmpeg.load();
+        }
+        
+        ffmpegReady = true;
+        window.ffmpegInstance = ffmpeg;
+        console.log("FFmpeg ready for MP4 conversion");
+        
+    } catch (error) {
+        console.warn("FFmpeg initialization failed:", error);
+        ffmpegReady = false;
+        statusDiv.innerText = "Ready (WebM format will be used for Android)";
+    }
+}
 
 // ============================================
 // 1. INITIALIZATION - Request Camera & Setup
@@ -33,7 +61,7 @@ async function init() {
                 width: { ideal: 1080 },
                 height: { ideal: 1920 }
             },
-            audio: true // We'll use the mic for recording only, not for live preview
+            audio: true // We'll use the mic for recording only
         });
         
         // Display camera preview
@@ -46,6 +74,9 @@ async function init() {
         // Start drawing loop
         drawLoop();
         
+        // Initialize FFmpeg for MP4 conversion
+        await initFFmpeg();
+        
         statusDiv.innerText = "Ready";
         startBtn.disabled = false;
         
@@ -57,7 +88,7 @@ async function init() {
 }
 
 // ============================================
-// 2. DRAWING LOOP - Render Camera to Canvas
+// 2. DRAWING LOOP - Render Camera to Canvas + Overlay Text
 // ============================================
 function drawLoop() {
     requestAnimationFrame(drawLoop);
@@ -97,7 +128,45 @@ function drawLoop() {
         ctx.scale(-1, 1);
         ctx.drawImage(preview, canvasWidth - offsetX - drawWidth, offsetY, drawWidth, drawHeight);
         ctx.restore();
+        
+        // Draw text overlay at bottom - "#CRIMETOSAY KARAOKE CHALLENGE!"
+        drawTextOverlay();
     }
+}
+
+// ============================================
+// DRAW TEXT OVERLAY - Kermit Green Impact Text with Black Border
+// ============================================
+function drawTextOverlay() {
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    
+    // Text properties
+    const text = "#CRIMETOSAY KARAOKE CHALLENGE!";
+    const fontSize = 80;
+    const fontFamily = "Impact, Arial Black, sans-serif";
+    
+    // Kermit green color
+    const textColor = "#66BB6A"; // Kermit green
+    const borderColor = "#000000"; // Black border
+    const borderWidth = 5;
+    
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    
+    // Position at bottom with padding
+    const textX = canvasWidth / 2;
+    const textY = canvasHeight - 100;
+    
+    // Draw black border (stroke)
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = borderWidth;
+    ctx.strokeText(text, textX, textY);
+    
+    // Draw green text (fill)
+    ctx.fillStyle = textColor;
+    ctx.fillText(text, textX, textY);
 }
 
 // ============================================
@@ -105,49 +174,27 @@ function drawLoop() {
 // ============================================
 async function startRecording() {
     try {
-        recordedChunks = [];
-        
-        // 1. Create Audio Context
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // CRITICAL FIX: Explicitly resume the context inside the user gesture
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
+        // Stop any previously playing audio
+        if (backingTrackAudio) {
+            backingTrackAudio.pause();
+            backingTrackAudio.currentTime = 0;
         }
-
-        // 2. Create destination for the mixed audio
-        const mixedDestination = audioContext.createMediaStreamDestination();
         
-        // 3. Connect Microphone
-        const micSource = audioContext.createMediaStreamSource(stream);
-        micSource.connect(mixedDestination);
+        recordedChunks = [];
+        recordingStartTime = Date.now();
         
-        // 4. Load and Connect Backing Track
-        backingTrackAudio = new Audio('crime-to-say-oke-challenge.mp3');
-        backingTrackAudio.crossOrigin = "anonymous";
-        
-        // Wait for metadata to ensure duration is known
-        await new Promise(resolve => {
-            if (backingTrackAudio.readyState >= 1) resolve();
-            else backingTrackAudio.addEventListener('loadedmetadata', resolve, { once: true });
-        });
-
-        const trackSource = audioContext.createMediaElementSource(backingTrackAudio);
-        trackSource.connect(mixedDestination);
-        
-        // Connect to speakers so user can hear themselves and music
-        trackSource.connect(audioContext.destination); 
-        micSource.connect(audioContext.destination); 
-
-        // 5. Create Canvas Stream (Video)
+        // Create Canvas Stream (Video only - no audio)
         const canvasStream = canvas.captureStream(30);
         
-        // 6. Replace Audio Track with Mixed Track
-        const mixedAudioTrack = mixedDestination.stream.getAudioTracks()[0];
-        // Remove existing audio tracks from canvas stream if any
+        // Get microphone audio stream
+        const micAudioTrack = stream.getAudioTracks()[0];
+        
+        // Remove existing audio tracks from canvas stream
         canvasStream.getAudioTracks().forEach(t => canvasStream.removeTrack(t));
-        canvasStream.addTrack(mixedAudioTrack);
-
+        
+        // Add microphone audio track to canvas stream
+        canvasStream.addTrack(micAudioTrack);
+        
         // Detect Format
         let mimeType = '';
         if (MediaRecorder.isTypeSupported('video/mp4')) {
@@ -168,25 +215,29 @@ async function startRecording() {
             return;
         }
 
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.ondataavailable = (e) => { 
+            if (e.data.size > 0) recordedChunks.push(e.data); 
+        };
         
         mediaRecorder.onstop = async () => {
-            const blob = new Blob(recordedChunks, { type: mimeType });
+            // Calculate actual recording duration
+            recordingDuration = (Date.now() - recordingStartTime) / 1000;
+            
+            const videoBlob = new Blob(recordedChunks, { type: mimeType });
             const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
             
-            // Stop backing track
-            if (backingTrackAudio) {
-                backingTrackAudio.pause();
-                backingTrackAudio.currentTime = 0;
-            }
+            // Reset microphone muting
+            statusDiv.innerText = "Processing audio...";
             
             if (ext === 'mp4') {
-                downloadFile(blob, `crime-to-say-${Date.now()}.mp4`);
-                statusDiv.innerText = "Done! (MP4)";
+                // Mix audio after recording for MP4
+                await mixAudioWithVideo(videoBlob, 'mp4');
             } else {
-                statusDiv.innerText = "Converting to MP4... (Do not close)";
-                await convertToMp4(blob);
+                // For WebM, use FFmpeg to mix
+                statusDiv.innerText = "Mixing audio...";
+                await mixAudioWithVideo(videoBlob, 'webm');
             }
+            
             startBtn.disabled = false;
             stopBtn.disabled = true;
             drawLoop();
@@ -197,15 +248,26 @@ async function startRecording() {
             statusDiv.innerText = "Recording Error: " + e.error.name;
             startBtn.disabled = false;
             stopBtn.disabled = true;
+            // Stop audio playback on error
+            if (backingTrackAudio) backingTrackAudio.pause();
         };
 
-        // START EVERYTHING SIMULTANEOUSLY
+        // START RECORDING
         mediaRecorder.start();
         
-        // Critical: Play audio ONLY after context is resumed and recorder started
+        // Play backing track AFTER recording starts
         try {
+            backingTrackAudio = new Audio('./crime-to-say-oke-challenge.mp3');
+            backingTrackAudio.crossOrigin = "anonymous";
+            
+            // Wait for metadata
+            await new Promise(resolve => {
+                if (backingTrackAudio.readyState >= 1) resolve();
+                else backingTrackAudio.addEventListener('loadedmetadata', resolve, { once: true });
+            });
+            
             await backingTrackAudio.play();
-            statusDiv.innerText = "Recording...";
+            statusDiv.innerText = "Recording... (singing now!)";
         } catch (playError) {
             console.error("Audio play failed:", playError);
             statusDiv.innerText = "Audio blocked. Tap page then try again.";
@@ -229,47 +291,83 @@ async function startRecording() {
 function stopRecording() {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
+        
+        // Stop backing track immediately
+        if (backingTrackAudio) {
+            backingTrackAudio.pause();
+            backingTrackAudio.currentTime = 0;
+        }
+        
+        // Mute microphone to stop live feed
+        if (stream && stream.getAudioTracks().length > 0) {
+            stream.getAudioTracks()[0].enabled = false;
+        }
+        
         statusDiv.innerText = "Processing...";
     }
 }
 
 // ============================================
-// 5. CONVERT WebM to MP4 (using FFmpeg.wasm)
+// 5. MIX AUDIO WITH VIDEO (Post-Recording)
 // ============================================
-async function convertToMp4(webmBlob) {
-    // This requires FFmpeg.wasm library
-    // For now, just download as WebM if conversion library not available
-    if (typeof FFmpeg === 'undefined') {
-        console.warn("FFmpeg not available, downloading as WebM");
-        downloadFile(webmBlob, `crime-to-say-${Date.now()}.webm`);
-        statusDiv.innerText = "Downloaded as WebM (install FFmpeg.wasm for MP4 support)";
-        return;
-    }
-
+async function mixAudioWithVideo(videoBlob, format) {
     try {
-        const { FFmpeg, FFmpegUtil } = window.FFmpeg;
-        const ffmpeg = new FFmpeg.FFmpeg();
-        
-        if (!ffmpeg.isLoaded()) {
-            statusDiv.innerText = "Loading encoder...";
-            await ffmpeg.load();
+        if (!ffmpegReady || !window.ffmpegInstance) {
+            // Fallback: just download the video as-is
+            console.warn("FFmpeg not available, audio mixing skipped");
+            downloadFile(videoBlob, `crime-to-say-${Date.now()}.${format}`);
+            statusDiv.innerText = "Done! (Video only - audio mix unavailable)";
+            return;
         }
 
-        const data = await webmBlob.arrayBuffer();
-        ffmpeg.FS('writeFile', 'input.webm', new Uint8Array(data));
+        const ffmpeg = window.ffmpegInstance;
+        statusDiv.innerText = "Mixing audio tracks...";
         
-        await ffmpeg.run('-i', 'input.webm', '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', 'output.mp4');
+        // Write video file to FFmpeg
+        const videoData = await videoBlob.arrayBuffer();
+        ffmpeg.FS('writeFile', `input.${format}`, new Uint8Array(videoData));
+        
+        // Load backing track
+        const backingTrackResponse = await fetch('./crime-to-say-oke-challenge.mp3');
+        const backingTrackData = await backingTrackResponse.arrayBuffer();
+        ffmpeg.FS('writeFile', 'backing.mp3', new Uint8Array(backingTrackData));
+        
+        // FFmpeg command to mix audio:
+        // - Takes video with mic audio (input)
+        // - Overlays backing track
+        // - Adjusts levels so both are audible
+        // - Handles different durations gracefully
+        
+        statusDiv.innerText = "Encoding final video...";
+        
+        await ffmpeg.run(
+            '-i', `input.${format}`,
+            '-i', 'backing.mp3',
+            '-filter_complex', '[0:a][1:a]amerge=inputs=2[a]',
+            '-map', '0:v',
+            '-map', '[a]',
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-c:a', 'aac',
+            '-ac', '2',
+            'output.mp4'
+        );
         
         const output = ffmpeg.FS('readFile', 'output.mp4');
         const mp4Blob = new Blob([output.buffer], { type: 'video/mp4' });
         
+        // Cleanup
+        ffmpeg.FS('unlink', `input.${format}`);
+        ffmpeg.FS('unlink', 'backing.mp3');
+        ffmpeg.FS('unlink', 'output.mp4');
+        
         downloadFile(mp4Blob, `crime-to-say-${Date.now()}.mp4`);
-        statusDiv.innerText = "Done! (MP4 - Converted)";
+        statusDiv.innerText = "Done! Ready to share! 🎉";
         
     } catch (error) {
-        console.error("Conversion failed:", error);
-        statusDiv.innerText = "Conversion failed, downloading as WebM";
-        downloadFile(webmBlob, `crime-to-say-${Date.now()}.webm`);
+        console.error("Audio mixing failed:", error);
+        statusDiv.innerText = "Audio mixing failed - downloading video only";
+        downloadFile(videoBlob, `crime-to-say-${Date.now()}.${format}`);
     }
 }
 
