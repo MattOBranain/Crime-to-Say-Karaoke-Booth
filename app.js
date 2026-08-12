@@ -1,90 +1,49 @@
-import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js';
-import { fetchFile } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
+// ... (imports and global variables remain the same)
 
-let mediaRecorder = null;
-let recordedChunks = [];
-let stream = null;
-let animationFrameId;
-let audioContext = null;
-let backingTrackSource = null;
-let backingTrackAudio = null;
-
-const previewVideo = document.getElementById('preview');
-const canvas = document.getElementById('processing-canvas');
-const ctx = canvas.getContext('2d');
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
-const statusDiv = document.getElementById('status');
-
-// 1. Initialize Camera (9:16 Portrait)
-async function initCamera() {
-    try {
-        const constraints = {
-            video: { width: { ideal: 1080 }, height: { ideal: 1920 }, facingMode: "user" },
-            audio: true
-        };
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        previewVideo.srcObject = stream;
-        previewVideo.onloadedmetadata = () => {
-            previewVideo.play();
-            drawLoop();
-        };
-    } catch (err) {
-        statusDiv.innerText = "Camera Error: " + err.message;
-    }
-}
-
-// 2. Draw Loop (Video + Lyrics)
-function drawLoop() {
-    if (!stream) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.save();
-    ctx.scale(-1, 1);
-    ctx.drawImage(previewVideo, -canvas.width, 0, canvas.width, canvas.height);
-    ctx.restore();
-
-    ctx.font = "bold 40px Arial";
-    ctx.fillStyle = "white";
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 2;
-    ctx.textAlign = "center";
-    ctx.strokeText("CRIME TO SAY...", canvas.width / 2, canvas.height - 150);
-    ctx.fillText("CRIME TO SAY...", canvas.width / 2, canvas.height - 150);
-
-    animationFrameId = requestAnimationFrame(drawLoop);
-}
-
-// 3. Start Recording (With Audio Mixing)
+// 3. Start Recording (FIXED for iOS/Firefox)
 async function startRecording() {
     recordedChunks = [];
     
-    // Create Audio Context for mixing
+    // 1. Create Audio Context
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     
-    // 1. Create destination for the mixed audio (Mic + Backing Track)
+    // CRITICAL FIX: Explicitly resume the context inside the user gesture
+    if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+    }
+
+    // 2. Create destination for the mixed audio
     const mixedDestination = audioContext.createMediaStreamDestination();
     
-    // 2. Connect Microphone to the mix
+    // 3. Connect Microphone
     const micSource = audioContext.createMediaStreamSource(stream);
     micSource.connect(mixedDestination);
     
-    // 3. Load and Connect Backing Track
-    backingTrackAudio = new Audio('crime-to-say-oke-challenge.mp3'); // Ensure filename matches your renamed file
+    // 4. Load and Connect Backing Track
+    backingTrackAudio = new Audio('crime-to-say-oke-challenge.mp3');
     backingTrackAudio.crossOrigin = "anonymous";
+    
+    // Wait for metadata to ensure duration is known
+    await new Promise(resolve => {
+        if (backingTrackAudio.readyState >= 1) resolve();
+        else backingTrackAudio.addEventListener('loadedmetadata', resolve, { once: true });
+    });
+
     const trackSource = audioContext.createMediaElementSource(backingTrackAudio);
     trackSource.connect(mixedDestination);
     
-    // Optional: Connect to destination so YOU can hear it while recording
+    // Connect to speakers so user can hear themselves and music
     trackSource.connect(audioContext.destination); 
     micSource.connect(audioContext.destination); 
 
-    // 4. Create Canvas Stream (Video)
+    // 5. Create Canvas Stream (Video)
     const canvasStream = canvas.captureStream(30);
     
-    // 5. Replace Canvas Audio Track with Mixed Audio Track
+    // 6. Replace Audio Track with Mixed Track
     const mixedAudioTrack = mixedDestination.stream.getAudioTracks()[0];
-    canvasStream.removeTrack(canvasStream.getAudioTracks()[0]); // Remove original mic track
-    canvasStream.addTrack(mixedAudioTrack); // Add mixed track
+    // Remove existing audio tracks from canvas stream if any
+    canvasStream.getAudioTracks().forEach(t => canvasStream.removeTrack(t));
+    canvasStream.addTrack(mixedAudioTrack);
 
     // Detect Format
     let mimeType = '';
@@ -96,7 +55,16 @@ async function startRecording() {
         mimeType = 'video/webm';
     }
 
-    mediaRecorder = new MediaRecorder(canvasStream, { mimeType });
+    // Initialize Recorder
+    try {
+        mediaRecorder = new MediaRecorder(canvasStream, { mimeType });
+    } catch (e) {
+        console.error("MediaRecorder failed:", e);
+        statusDiv.innerText = "Error: Browser not supported.";
+        startBtn.disabled = false;
+        return;
+    }
+
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
     
     mediaRecorder.onstop = async () => {
@@ -104,8 +72,10 @@ async function startRecording() {
         const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
         
         // Stop backing track
-        backingTrackAudio.pause();
-        backingTrackAudio.currentTime = 0;
+        if (backingTrackAudio) {
+            backingTrackAudio.pause();
+            backingTrackAudio.currentTime = 0;
+        }
         
         if (ext === 'mp4') {
             downloadFile(blob, `crime-to-say-${Date.now()}.mp4`);
@@ -115,61 +85,33 @@ async function startRecording() {
             await convertToMp4(blob);
         }
         startBtn.disabled = false;
+        stopBtn.disabled = true;
         drawLoop();
     };
 
-    // Start Recording AND Play Audio simultaneously
+    mediaRecorder.onerror = (e) => {
+        console.error("Recorder Error:", e.error);
+        statusDiv.innerText = "Recording Error: " + e.error.name;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+    };
+
+    // START EVERYTHING SIMULTANEOUSLY
     mediaRecorder.start();
-    backingTrackAudio.play();
+    
+    // Critical: Play audio ONLY after context is resumed and recorder started
+    try {
+        await backingTrackAudio.play();
+        statusDiv.innerText = "Recording...";
+    } catch (playError) {
+        console.error("Audio play failed:", playError);
+        statusDiv.innerText = "Audio blocked. Tap page then try again.";
+        mediaRecorder.stop();
+        startBtn.disabled = false;
+    }
     
     startBtn.disabled = true;
     stopBtn.disabled = false;
-    statusDiv.innerText = "Recording...";
 }
 
-// 4. Convert WebM to MP4 (Client-Side)
-async function convertToMp4(webmBlob) {
-    const ffmpeg = new FFmpeg();
-    const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/umd';
-    try {
-        await ffmpeg.load({
-            coreURL: `${baseURL}/ffmpeg-core.js`,
-            wasmURL: `${baseURL}/ffmpeg-core.wasm`,
-            workerURL: `${baseURL}/ffmpeg-core.worker.js`
-        });
-
-        await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob));
-        
-        await ffmpeg.exec([
-            '-i', 'input.webm',
-            '-c:v', 'libx264',
-            '-preset', 'fast',
-            '-crf', '22',
-            '-c:a', 'aac',
-            '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
-            'output.mp4'
-        ]);
-
-        const mp4Data = await ffmpeg.readFile('output.mp4');
-        const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
-        downloadFile(mp4Blob, `crime-to-say-${Date.now()}.mp4`);
-        statusDiv.innerText = "Done! (Converted)";
-    } catch (err) {
-        console.error(err);
-        statusDiv.innerText = "Error converting. Try again.";
-        downloadFile(webmBlob, `crime-to-say-${Date.now()}.webm`);
-    }
-}
-
-function downloadFile(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-}
-
-startBtn.addEventListener('click', startRecording);
-stopBtn.addEventListener('click', () => mediaRecorder.stop());
-initCamera();   
+// ... (rest of the code remains the same)   
