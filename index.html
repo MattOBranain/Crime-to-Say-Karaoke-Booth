@@ -5,28 +5,90 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CRIME TO SAY... KARAOKE BOOTH</title>
     <style>
-        body { margin: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: white; font-family: sans-serif; }
-        #preview-container { position: relative; width: 100%; max-width: 450px; aspect-ratio: 9/16; background: #111; overflow: hidden; border: 2px solid #333; }
-        video, canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        #controls { margin-top: 20px; z-index: 10; text-align: center; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #e1306c; color: white; border: none; border-radius: 8px; margin: 5px; }
-        button:disabled { background: #555; }
-        #status { margin-top: 10px; font-size: 14px; color: #aaa; min-height: 20px; max-width: 90%; }
-        #processing-canvas { display: none; }
-        h1 { font-size: 1.2rem; margin-bottom: 10px; text-align: center; color: #fff; }
+        body { 
+            margin: 0; 
+            background: #000; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            color: white; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+        }
+        h1 { 
+            font-size: 1.2rem; 
+            margin-bottom: 10px; 
+            text-align: center; 
+            color: #fff; 
+            padding: 0 10px;
+        }
+        #preview-container { 
+            position: relative; 
+            width: 100%; 
+            max-width: 450px; 
+            aspect-ratio: 9/16; 
+            background: #111; 
+            overflow: hidden; 
+            border: 2px solid #333; 
+        }
+        video, canvas { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            transform: scaleX(-1); /* Mirror effect */
+        }
+        #controls { 
+            margin-top: 20px; 
+            z-index: 10; 
+            text-align: center; 
+        }
+        button { 
+            padding: 15px 30px; 
+            font-size: 18px; 
+            cursor: pointer; 
+            background: #e1306c; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            margin: 5px; 
+            font-weight: bold;
+        }
+        button:disabled { 
+            background: #555; 
+            cursor: not-allowed;
+        }
+        #status { 
+            margin-top: 15px; 
+            font-size: 14px; 
+            color: #aaa; 
+            min-height: 20px; 
+            max-width: 90%; 
+            text-align: center;
+        }
+        #processing-canvas { 
+            display: none; 
+        }
     </style>
 </head>
 <body>
+
     <h1>CRIME TO SAY... KARAOKE BOOTH</h1>
+
     <div id="preview-container">
         <video id="preview" autoplay playsinline muted></video>
     </div>
+
     <div id="controls">
         <button id="startBtn">Start Recording</button>
         <button id="stopBtn" disabled>Stop</button>
     </div>
     <div id="status">Ready</div>
+
+    <!-- Hidden canvas for recording video + lyrics -->
     <canvas id="processing-canvas" width="1080" height="1920"></canvas>
+
+    <!-- IMPORTANT: type="module" is required for the imports in app.js -->
     <script type="module" src="app.js"></script>
 </body>
 </html>   
