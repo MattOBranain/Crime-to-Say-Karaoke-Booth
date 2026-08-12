@@ -13,4 +13,20 @@
         button:disabled { background: #555; }
         #status { margin-top: 10px; font-size: 14px; color: #aaa; min-height: 20px; max-width: 90%; }
         #processing-canvas { display: none; }
-       
+        h1 { font-size: 1.2rem; margin-bottom: 10px; text-align: center; color: #fff; }
+    </style>
+</head>
+<body>
+    <h1>CRIME TO SAY... KARAOKE BOOTH</h1>
+    <div id="preview-container">
+        <video id="preview" autoplay playsinline muted></video>
+    </div>
+    <div id="controls">
+        <button id="startBtn">Start Recording</button>
+        <button id="stopBtn" disabled>Stop</button>
+    </div>
+    <div id="status">Ready</div>
+    <canvas id="processing-canvas" width="1080" height="1920"></canvas>
+    <script type="module" src="app.js"></script>
+</body>
+</html>   
