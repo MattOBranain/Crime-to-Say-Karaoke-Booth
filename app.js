@@ -143,26 +143,32 @@ function drawTextOverlay() {
     
     // Text properties
     const text = "#CRIMETOSAY KARAOKE CHALLENGE!";
-    const fontSize = 80;
-    const fontFamily = "Impact, Arial Black, sans-serif";
+    const fontSize = 100;
+    const fontFamily = "Impact";
     
     // Kermit green color
     const textColor = "#66BB6A"; // Kermit green
     const borderColor = "#000000"; // Black border
-    const borderWidth = 5;
+    const borderWidth = 8;
     
     ctx.font = `bold ${fontSize}px ${fontFamily}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     
     // Position at bottom with padding
     const textX = canvasWidth / 2;
-    const textY = canvasHeight - 100;
+    const textY = canvasHeight - 80;
     
-    // Draw black border (stroke)
+    // Draw black border (stroke) - thicker for visibility
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = borderWidth;
-    ctx.strokeText(text, textX, textY);
+    
+    // Draw stroke multiple times for better effect
+    for (let i = 0; i < 3; i++) {
+        ctx.strokeText(text, textX, textY);
+    }
     
     // Draw green text (fill)
     ctx.fillStyle = textColor;
@@ -315,7 +321,7 @@ async function mixAudioWithVideo(videoBlob, format) {
         if (!ffmpegReady || !window.ffmpegInstance) {
             // Fallback: just download the video as-is
             console.warn("FFmpeg not available, audio mixing skipped");
-            downloadFile(videoBlob, `crime-to-say-${Date.now()}.${format}`);
+            await saveToGallery(videoBlob, `crime-to-say-${Date.now()}.${format}`);
             statusDiv.innerText = "Done! (Video only - audio mix unavailable)";
             return;
         }
@@ -361,28 +367,91 @@ async function mixAudioWithVideo(videoBlob, format) {
         ffmpeg.FS('unlink', 'backing.mp3');
         ffmpeg.FS('unlink', 'output.mp4');
         
-        downloadFile(mp4Blob, `crime-to-say-${Date.now()}.mp4`);
+        await saveToGallery(mp4Blob, `crime-to-say-${Date.now()}.mp4`);
         statusDiv.innerText = "Done! Ready to share! 🎉";
         
     } catch (error) {
         console.error("Audio mixing failed:", error);
         statusDiv.innerText = "Audio mixing failed - downloading video only";
-        downloadFile(videoBlob, `crime-to-say-${Date.now()}.${format}`);
+        await saveToGallery(videoBlob, `crime-to-say-${Date.now()}.${format}`);
     }
 }
 
 // ============================================
-// 6. DOWNLOAD FILE
+// 6. SAVE TO GALLERY (iOS Photos + Android)
 // ============================================
-function downloadFile(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+async function saveToGallery(blob, filename) {
+    try {
+        // Check if File System Access API is available (iOS 16.1+, Android)
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{
+                        description: 'Video Files',
+                        accept: { 'video/mp4': ['.mp4', '.webm'] }
+                    }]
+                });
+                
+                const writable = await handle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                statusDiv.innerText = "Saved to Photos! 📱";
+                return;
+            } catch (e) {
+                console.log("File picker cancelled or unavailable");
+            }
+        }
+
+        // Fallback: Try Share API (iOS 13+, Android)
+        if (navigator.share && blob.type === 'video/mp4') {
+            try {
+                const file = new File([blob], filename, { type: 'video/mp4' });
+                await navigator.share({
+                    files: [file],
+                    title: 'Crime to Say Karaoke Video'
+                });
+                statusDiv.innerText = "Shared! 🎉";
+                return;
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    console.log("Share failed:", e);
+                }
+            }
+        }
+
+        // Fallback: Direct download for Safari/Chrome
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        
+        // For iOS: Append to body for better handling
+        document.body.appendChild(a);
+        a.click();
+        
+        // Give it a moment to process, then remove
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+        
+        statusDiv.innerText = "Video saved! Check Files or Downloads app 📥";
+        
+    } catch (error) {
+        console.error("Save to gallery error:", error);
+        // Last resort: just download it
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        statusDiv.innerText = "Video downloaded! Check Downloads or Files app 📥";
+    }
 }
 
 // ============================================
