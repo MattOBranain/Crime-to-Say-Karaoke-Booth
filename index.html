@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CRIME TO SAY... KARAOKE BOOTH</title>
+    <title>CRIME TO SAY... KARAOKE CHALLENGE</title>
     <style>
         body { 
             margin: 0; 
@@ -18,23 +18,22 @@
             padding: 20px;
         }
         h1 { 
-            font-size: 1.2rem; 
-            margin-bottom: 10px; 
+            font-size: 2rem; 
+            margin-bottom: 6px; 
             text-align: center; 
             color: #fff; 
             padding: 0 10px;
+            letter-spacing: 0.02em;
         }
         .instructions {
             text-align: center;
-            margin-bottom: 20px;
-            font-size: 14px;
-            color: #ccc;
-            max-width: 500px;
-            line-height: 1.8;
+            margin-bottom: 14px;
+            font-size: 1.05rem;
+            color: #ddd;
+            max-width: 600px;
+            line-height: 1.2;
         }
-        .instructions p {
-            margin: 5px 0;
-        }
+        .instructions ol { margin: 0; padding-left: 1.2rem; }
         #preview-container { 
             position: relative; 
             width: 100%; 
@@ -51,27 +50,30 @@
             transform: scaleX(-1); /* Mirror effect */
         }
         #controls { 
-            margin-top: 20px; 
+            margin-top: 12px; 
             z-index: 10; 
             text-align: center; 
         }
         button { 
-            padding: 15px 30px; 
-            font-size: 18px; 
+            padding: 12px 22px; 
+            font-size: 16px; 
             cursor: pointer; 
             background: #e1306c; 
             color: white; 
             border: none; 
             border-radius: 8px; 
-            margin: 5px; 
+            margin: 6px; 
             font-weight: bold;
+        }
+        button.secondary {
+            background: #444;
         }
         button:disabled { 
             background: #555; 
             cursor: not-allowed;
         }
         #status { 
-            margin-top: 15px; 
+            margin-top: 10px; 
             font-size: 14px; 
             color: #aaa; 
             min-height: 20px; 
@@ -81,33 +83,32 @@
         #processing-canvas { 
             display: none; 
         }
+        .editor { margin-top: 12px; text-align:center; }
+        .editor input[type=file] { color: #fff; }
+        .timings { color: #eee; font-size: 13px; margin-top:8px; }
         .footer {
-            margin-top: 40px;
+            margin-top: 30px;
             font-size: 14px;
             color: #888;
             text-align: center;
             max-width: 700px;
-            line-height: 1.8;
+            line-height: 1.6;
         }
-        .footer p {
-            margin: 15px 0;
-        }
-        .footer strong {
-            color: #ccc;
-        }
+        .footer p { margin: 12px 0; }
+        .footer strong { color: #ccc; }
     </style>
-    
     <!-- FFmpeg.wasm for MP4 conversion (required for Android support) -->
     <script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
     <script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.0/dist/util.min.js"></script>
 </head>
 <body>
-    <h1>'CRIME TO SAY...' KARAOKE BOOTH</h1>
+    <h1>CRIME TO SAY... KARAOKE CHALLENGE</h1>
 
     <div class="instructions">
-        <p>1. Sing, record, post!</p>
-        <p>2. Use hashtag <strong>#CrimeToSay</strong></p>
-        <p>3. Tag or DM <strong>@MattOBranain</strong> (Insta / X / TikTok)</p>
+        <ol>
+            <li>SING, RECORD, POST!</li>
+            <li>TAG or DM @MATTOBRANAIN</li>
+        </ol>
     </div>
 
     <div id="preview-container">
@@ -117,15 +118,22 @@
     <div id="controls">
         <button id="startBtn">Start Recording</button>
         <button id="stopBtn" disabled>Stop</button>
+        <div class="editor">
+            <input id="lyricsFile" type="file" accept="application/json" />
+            <button id="tapToggle" class="secondary">Start Tap-to-Mark</button>
+            <button id="markBtn" class="secondary" disabled>Mark Timestamp</button>
+            <button id="exportTimings" class="secondary" disabled>Export Timings</button>
+            <div class="timings" id="timingsList">No timings yet.</div>
+        </div>
     </div>
     <div id="status">Ready</div>
 
-    <!-- Hidden canvas for recording video -->
+    <!-- Hidden canvas for recording video (1080x1920 output) -->
     <canvas id="processing-canvas" width="1080" height="1920"></canvas>
 
     <!-- Footer -->
     <div class="footer">
-        <p><strong>Defend Our Juries advise:</strong> 'Replicating this video (song) comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video (song) is doing. It is also not illegal to campaign for the de-proscription of a group. If you do experience any legal issues resulting from joining this truth-telling trend, please email info at defendourjuries dot org'</p>
+        <p><strong>Defend Our Juries advise:</strong> 'Replicating this video (song) comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video[...]</p>
         <p>For other enquiries or collaboration ideas contact matt.o.branain at protonmail dot com.</p>
     </div>
 
