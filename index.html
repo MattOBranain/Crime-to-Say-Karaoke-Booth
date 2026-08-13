@@ -83,9 +83,6 @@
         #processing-canvas { 
             display: none; 
         }
-        .editor { margin-top: 12px; text-align:center; }
-        .editor input[type=file] { color: #fff; }
-        .timings { color: #eee; font-size: 13px; margin-top:8px; }
         .footer {
             margin-top: 30px;
             font-size: 14px;
@@ -118,13 +115,6 @@
     <div id="controls">
         <button id="startBtn">Start Recording</button>
         <button id="stopBtn" disabled>Stop</button>
-        <div class="editor">
-            <input id="lyricsFile" type="file" accept="application/json" />
-            <button id="tapToggle" class="secondary">Start Tap-to-Mark</button>
-            <button id="markBtn" class="secondary" disabled>Mark Timestamp</button>
-            <button id="exportTimings" class="secondary" disabled>Export Timings</button>
-            <div class="timings" id="timingsList">No timings yet.</div>
-        </div>
     </div>
     <div id="status">Ready</div>
 
@@ -133,7 +123,7 @@
 
     <!-- Footer -->
     <div class="footer">
-        <p><strong>Defend Our Juries advise:</strong> 'Replicating this video (song) comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video[...]</p>
+        <p><strong>Defend Our Juries advise:</strong> 'Replicating this video (song) comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video[...]
         <p>For other enquiries or collaboration ideas contact matt.o.branain at protonmail dot com.</p>
     </div>
 
