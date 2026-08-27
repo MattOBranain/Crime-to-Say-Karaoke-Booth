@@ -364,11 +364,11 @@ function layoutLine(line, fontSize) {
   return words;
 }
 
-function findActiveLine(t) {
-  for (const line of lyricLines) {
-    if (t >= line.start && t < line.end) return line;
+function findActiveLineIndex(t) {
+  for (let i = 0; i < lyricLines.length; i++) {
+    if (t >= lyricLines[i].start && t < lyricLines[i].end) return i;
   }
-  return null;
+  return -1;
 }
 
 function easeInOut(t) {
@@ -383,8 +383,9 @@ function lyricBaselineY() {
 }
 
 function drawLyricsAndBall(t) {
-  const line = findActiveLine(t);
-  if (!line) return;
+  const lineIndex = findActiveLineIndex(t);
+  if (lineIndex === -1) return;
+  const line = lyricLines[lineIndex];
 
   const words = layoutLine(line, lyricFontSize);
   const baselineY = lyricBaselineY();
@@ -407,10 +408,10 @@ function drawLyricsAndBall(t) {
     CTX.fillText(w.text, drawX, baselineY);
   }
 
-  drawBall(line, words, activeIndex, t, baselineY);
+  drawBall(lineIndex, line, words, activeIndex, t, baselineY);
 }
 
-function drawBall(line, words, activeIndex, t, baselineY) {
+function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
   const restY = baselineY - lyricFontSize * 1.05;
   const amplitude = lyricFontSize * 1.5;
   const radius = Math.max(8, lyricFontSize * 0.22);
@@ -423,9 +424,19 @@ function drawBall(line, words, activeIndex, t, baselineY) {
   const lastWord = words[words.length - 1];
 
   if (t < firstWord.start) {
-    const entryDuration = Math.min(0.5, firstWord.start - line.start);
+    // Base the entry's lead-in time on the actual gap since the *previous*
+    // line's last word, not this line's own bracket timestamp — those often
+    // coincide (many lines' first word has no lead-in tag and starts right
+    // at the line marker), which left zero runway for the fly-in animation
+    // and made the ball just snap onto the word out of nowhere.
+    const prevLine = lyricLines[lineIndex - 1];
+    const prevLastWordStart =
+      prevLine && prevLine.words.length
+        ? prevLine.words[prevLine.words.length - 1].start
+        : firstWord.start - 0.4; // song's very first line: fixed lead-in
+    const entryDuration = Math.min(0.5, Math.max(0.05, firstWord.start - prevLastWordStart));
     const entryStart = firstWord.start - entryDuration;
-    if (t >= entryStart && entryDuration > 0) {
+    if (t >= entryStart) {
       const p = easeInOut(clamp((t - entryStart) / entryDuration, 0, 1));
       x = lerp(offLeft, firstWord.x, p);
       y = restY - Math.sin(Math.PI * p) * amplitude;
