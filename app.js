@@ -1,15 +1,9 @@
 // =====================================================================
 // Crime to Say Karaoke Booth
 // One-page virtual karaoke booth: camera + mic capture, synced lyric/ball
-// overlay, optional UK-flag mouth-gag AR effect, mixed audio recording,
-// and MP4 export ready for sharing.
+// overlay, mixed audio recording, and MP4 export ready for sharing.
 // =====================================================================
 
-import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
-
-// ---------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------
 const AUDIO_FILE = './crime-2-say-oke-shortest.mp3';
 const LRC_FILE = './crime-2-say-oke-shortest.lrc';
 const OUTPUT_PREFIX = 'Crime2Say-';
@@ -18,16 +12,27 @@ const BPM = 80;
 const BEAT_SEC = 60 / BPM;
 const B3_FREQ = 246.94;
 
-const BASE_MUSIC_GAIN = 0.85;
-const DUCK_GAIN = 0.6;
-const MIC_GAIN = 1.0;
+// Audio mix levels. Two separate music gains are used: one for what the
+// singer hears live (kept loud so they can perform to it), and a lower one
+// that's actually recorded (so their voice cuts through in the final mix).
+const MIC_GAIN = 1.6;
+const MUSIC_LIVE_GAIN = 0.85;
+const MUSIC_REC_BASE_GAIN = 0.5;
+const MUSIC_REC_DUCK_GAIN = 0.32;
+const DUCK_THRESHOLD = 0.035;
+
+// Small delay applied only to the *recorded* audio (mic+music), never to
+// live monitoring. Camera pipeline latency on phones typically runs the
+// displayed video a little behind the true moment of capture, so the
+// recorded audio is nudged later to match what the video actually shows.
+const AV_SYNC_DELAY_SEC = 0.12;
 
 const MAX_CANVAS_DIM = 1280;
-const FOOTER_LINE_1 = "'CRIME TO SAY' KARAOKE CHALLENGE";
+const FOOTER_LINE_1 = "JOIN THE 'CRIME TO SAY' KARAOKE CHALLENGE";
 const FOOTER_LINE_2 = 'CRIME2SAY.UK';
 
-const FACE_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const GREEN_BRIGHT = '#00ff7f';
+const GREEN_DIM = '#0f8a4c';
 
 // ---------------------------------------------------------------------
 // DOM
@@ -36,6 +41,7 @@ const PREVIEW = document.getElementById('preview');
 const CANVAS = document.getElementById('stageCanvas');
 const CTX = CANVAS.getContext('2d');
 const FRAME = document.getElementById('frame');
+const BOOTH = document.getElementById('booth');
 const PERMISSION_GATE = document.getElementById('permissionGate');
 const PERMISSION_TEXT = document.getElementById('permissionText');
 const PERMISSION_RETRY = document.getElementById('permissionRetry');
@@ -43,13 +49,12 @@ const COUNTDOWN = document.getElementById('countdown');
 const RECORD_BTN = document.getElementById('recordBtn');
 const RECORD_LABEL = RECORD_BTN.querySelector('.rec-btn__label');
 const HELPER_TEXT = document.getElementById('helperText');
-const GAG_TOGGLE = document.getElementById('gagToggle');
-const GAG_LABEL = document.getElementById('gagLabel');
 
 const MODAL = document.getElementById('resultModal');
 const MODAL_TITLE = document.getElementById('modalTitle');
 const MODAL_SPINNER = document.getElementById('modalSpinner');
 const RESULT_VIDEO = document.getElementById('resultVideo');
+const MODAL_SHARE_TIP = document.getElementById('modalShareTip');
 const MODAL_HINT = document.getElementById('modalHint');
 const SAVE_BTN = document.getElementById('saveBtn');
 const RETRY_BTN = document.getElementById('retryBtn');
@@ -67,26 +72,20 @@ let lyricFontSize = 40;
 
 let appState = 'idle'; // idle | countingIn | recording | processing
 let musicStartAudioTime = null; // audioCtx time reference for lyric/ball clock
-let recordingStartWallTime = null;
 
 let mediaRecorder = null;
 let recordedChunks = [];
 let recDestination = null;
 let micSourceNode = null;
 let micGainNode = null;
-let musicGainNode = null;
+let musicLiveGainNode = null;
+let musicRecGainNode = null;
 let musicSourceNode = null;
-let duckRAF = null;
+let duckTimer = null;
+let activeCaptureVideoTrack = null;
 
 let nativeMp4Supported = false;
 let ffmpegPromise = null;
-
-let faceLandmarker = null;
-let faceLandmarkerReady = false;
-let faceFrameCounter = 0;
-let smoothedMouth = null;
-let lastFaceSeenAt = 0;
-const flagSprite = buildFlagSprite();
 
 let resultObjectUrl = null;
 let drawLoopStarted = false;
@@ -99,16 +98,12 @@ window.addEventListener('DOMContentLoaded', () => {
   preloadMusic();
   detectNativeMp4Support();
   initCamera();
-  initFaceLandmarker();
 });
 
 PERMISSION_RETRY.addEventListener('click', initCamera);
 RECORD_BTN.addEventListener('click', onRecordButton);
 RETRY_BTN.addEventListener('click', resetForNewTake);
 SAVE_BTN.addEventListener('click', onSaveClicked);
-GAG_TOGGLE.addEventListener('change', () => {
-  if (!GAG_TOGGLE.checked) smoothedMouth = null;
-});
 
 // ---------------------------------------------------------------------
 // Camera / mic setup
@@ -130,12 +125,12 @@ async function initCamera() {
     PERMISSION_GATE.classList.add('hidden');
     RECORD_BTN.disabled = false;
 
-    PREVIEW.addEventListener('loadedmetadata', fitCanvasToVideo);
-    fitCanvasToVideo();
+    PREVIEW.addEventListener('loadedmetadata', fitFrameToVideo);
+    fitFrameToVideo();
 
     if (!drawLoopStarted) {
       drawLoopStarted = true;
-      requestAnimationFrame(renderLoop);
+      scheduleNextFrame();
     }
   } catch (err) {
     console.error('Camera/mic error', err);
@@ -146,7 +141,10 @@ async function initCamera() {
   }
 }
 
-function fitCanvasToVideo() {
+// Sizes the on-screen preview frame (exact pixels, not CSS aspect-ratio) so
+// it always matches the camera's true orientation without ever squashing,
+// and sizes the recording canvas buffer to match.
+function fitFrameToVideo() {
   const vw = PREVIEW.videoWidth;
   const vh = PREVIEW.videoHeight;
   if (!vw || !vh) return;
@@ -161,13 +159,25 @@ function fitCanvasToVideo() {
   }
   CANVAS.width = cw;
   CANVAS.height = ch;
-  FRAME.style.aspectRatio = `${vw} / ${vh}`;
+
+  const isLandscape = window.matchMedia('(orientation: landscape)').matches;
+  const heightCapPx = window.innerHeight * (isLandscape ? 0.58 : 0.64);
+  const availW = BOOTH.clientWidth;
+
+  let boxW = availW;
+  let boxH = boxW * (vh / vw);
+  if (boxH > heightCapPx) {
+    boxH = heightCapPx;
+    boxW = boxH * (vw / vh);
+  }
+  FRAME.style.width = `${Math.round(boxW)}px`;
+  FRAME.style.height = `${Math.round(boxH)}px`;
+
   lyricFontSize = computeLyricFontSize();
 }
 
-window.addEventListener('resize', () => {
-  if (appState === 'idle') fitCanvasToVideo();
-});
+window.addEventListener('resize', () => { if (appState === 'idle') fitFrameToVideo(); });
+window.addEventListener('orientationchange', () => { if (appState === 'idle') fitFrameToVideo(); });
 
 // ---------------------------------------------------------------------
 // LRC parsing (enhanced/word-level LRC)
@@ -264,157 +274,31 @@ function getAudioCtx() {
 }
 
 // ---------------------------------------------------------------------
-// Face landmark tracking (for the UK flag mouth-gag effect)
-// ---------------------------------------------------------------------
-async function initFaceLandmarker() {
-  try {
-    const vision = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-    );
-    faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: FACE_MODEL_URL, delegate: 'GPU' },
-      runningMode: 'VIDEO',
-      numFaces: 1
-    });
-    faceLandmarkerReady = true;
-  } catch (e) {
-    console.warn('Face tracking unavailable', e);
-    faceLandmarkerReady = false;
-    GAG_TOGGLE.checked = false;
-    GAG_TOGGLE.disabled = true;
-    GAG_LABEL.title = 'Face tracking unavailable on this device or connection';
-  }
-}
-
-function updateFaceTracking() {
-  if (!GAG_TOGGLE.checked || !faceLandmarkerReady || PREVIEW.readyState < 2) return;
-  faceFrameCounter++;
-  if (faceFrameCounter % 2 !== 0) return; // throttle to ~every other frame
-
-  let result;
-  try {
-    result = faceLandmarker.detectForVideo(PREVIEW, performance.now());
-  } catch (e) {
-    return;
-  }
-  if (!result || !result.faceLandmarks || !result.faceLandmarks.length) return;
-
-  const lm = result.faceLandmarks[0];
-  const p1 = lm[61];
-  const p2 = lm[291];
-  if (!p1 || !p2) return;
-
-  // Landmarks are normalized [0,1] against the source video frame; mirror X
-  // to match the mirrored canvas we draw the preview onto.
-  const mx1 = CANVAS.width * (1 - p1.x);
-  const my1 = CANVAS.height * p1.y;
-  const mx2 = CANVAS.width * (1 - p2.x);
-  const my2 = CANVAS.height * p2.y;
-
-  const rawCx = (mx1 + mx2) / 2;
-  const rawCy = (my1 + my2) / 2;
-  const rawWidth = Math.hypot(mx2 - mx1, my2 - my1);
-  const rawAngle = Math.atan2(my2 - my1, mx2 - mx1);
-
-  if (!smoothedMouth) {
-    smoothedMouth = { cx: rawCx, cy: rawCy, angle: rawAngle, width: rawWidth };
-  } else {
-    const a = 0.35;
-    smoothedMouth.cx += (rawCx - smoothedMouth.cx) * a;
-    smoothedMouth.cy += (rawCy - smoothedMouth.cy) * a;
-    smoothedMouth.width += (rawWidth - smoothedMouth.width) * a;
-    let da = rawAngle - smoothedMouth.angle;
-    while (da > Math.PI) da -= Math.PI * 2;
-    while (da < -Math.PI) da += Math.PI * 2;
-    smoothedMouth.angle += da * a;
-  }
-  lastFaceSeenAt = performance.now();
-}
-
-function buildFlagSprite() {
-  const w = 300, h = 180;
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const g = c.getContext('2d');
-
-  g.fillStyle = '#00247d';
-  g.fillRect(0, 0, w, h);
-
-  g.strokeStyle = '#ffffff';
-  g.lineWidth = h * 0.34;
-  g.beginPath(); g.moveTo(0, 0); g.lineTo(w, h); g.moveTo(w, 0); g.lineTo(0, h); g.stroke();
-
-  g.strokeStyle = '#cf142b';
-  g.lineWidth = h * 0.14;
-  g.beginPath(); g.moveTo(0, 0); g.lineTo(w, h); g.stroke();
-  g.beginPath(); g.moveTo(w, 0); g.lineTo(0, h); g.stroke();
-
-  g.strokeStyle = '#ffffff';
-  g.lineWidth = h * 0.4;
-  g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
-
-  g.strokeStyle = '#cf142b';
-  g.lineWidth = h * 0.18;
-  g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
-
-  g.strokeStyle = 'rgba(0,0,0,0.55)';
-  g.lineWidth = 4;
-  g.strokeRect(2, 2, w - 4, h - 4);
-
-  return c;
-}
-
-function drawMouthGag() {
-  if (!GAG_TOGGLE.checked || !smoothedMouth) return;
-  if (performance.now() - lastFaceSeenAt > 450) return;
-
-  const { cx, cy, angle, width } = smoothedMouth;
-  const flagW = width * 2.1;
-  const flagH = flagW * (flagSprite.height / flagSprite.width);
-
-  CTX.save();
-  CTX.translate(cx, cy);
-  CTX.rotate(angle);
-
-  CTX.strokeStyle = 'rgba(15,15,15,0.85)';
-  CTX.lineWidth = Math.max(4, width * 0.07);
-  CTX.lineCap = 'round';
-  CTX.beginPath();
-  CTX.moveTo(-flagW * 0.48, 0);
-  CTX.lineTo(-flagW * 0.95, -flagH * 0.2);
-  CTX.moveTo(flagW * 0.48, 0);
-  CTX.lineTo(flagW * 0.95, -flagH * 0.2);
-  CTX.stroke();
-
-  CTX.drawImage(flagSprite, -flagW / 2, -flagH / 2, flagW, flagH);
-  CTX.restore();
-}
-
-// ---------------------------------------------------------------------
 // Lyric layout + bouncing ball
 // ---------------------------------------------------------------------
-function computeLyricFontSize() {
-  if (!CANVAS.width || !lyricLines.length) return Math.round((CANVAS.width || 720) * 0.08);
-
-  const cw = CANVAS.width;
-  const isPortrait = CANVAS.height >= CANVAS.width;
-  const marginRatio = isPortrait ? 0.88 : 0.8;
-  const maxWidth = cw * marginRatio;
-
+function fitFontSizeToWidth(lines, marginRatio, fontSpec) {
+  if (!CANVAS.width || !lines.length) return Math.round((CANVAS.width || 720) * 0.06);
+  const maxWidth = CANVAS.width * marginRatio;
   const REF = 100;
-  CTX.font = `bold ${REF}px Arial`;
+  CTX.font = fontSpec(REF);
   let longest = 0;
-  for (const line of lyricLines) {
-    const full = line.words.map((w) => w.text).join(' ');
-    const w = CTX.measureText(full).width;
+  for (const text of lines) {
+    const w = CTX.measureText(text).width;
     if (w > longest) longest = w;
   }
-  if (longest === 0) return Math.round(cw * 0.08);
+  if (longest === 0) return Math.round(CANVAS.width * 0.06);
+  return Math.floor(REF * (maxWidth / longest));
+}
 
-  let fontSize = Math.floor(REF * (maxWidth / longest));
-  const capFraction = isPortrait ? 0.34 : 0.22;
+function computeLyricFontSize() {
+  if (!CANVAS.width || !lyricLines.length) return Math.round((CANVAS.width || 720) * 0.08);
+  const isPortrait = CANVAS.height >= CANVAS.width;
+  const marginRatio = isPortrait ? 0.88 : 0.8;
+  const lines = lyricLines.map((l) => l.words.map((w) => w.text).join(' '));
+  let fontSize = fitFontSizeToWidth(lines, marginRatio, (px) => `bold ${px}px Arial`);
+  const capFraction = isPortrait ? 0.24 : 0.16;
   fontSize = Math.min(fontSize, Math.round(CANVAS.height * capFraction));
-  fontSize = Math.max(fontSize, Math.round(cw * 0.035));
+  fontSize = Math.max(fontSize, Math.round(CANVAS.width * 0.035));
   return fontSize;
 }
 
@@ -442,12 +326,19 @@ function easeInOut(t) {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }
 
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function lyricBaselineY() {
+  return Math.round(CANVAS.height * 0.58);
+}
+
 function drawLyricsAndBall(t) {
   const line = findActiveLine(t);
   if (!line) return;
 
   const words = layoutLine(line, lyricFontSize);
-  const baselineY = Math.round(CANVAS.height * 0.76);
+  const baselineY = lyricBaselineY();
 
   let activeIndex = words.findIndex((w) => t >= w.start && t < w.end);
 
@@ -460,8 +351,8 @@ function drawLyricsAndBall(t) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const isActive = i === activeIndex;
-    CTX.fillStyle = isActive ? '#00ff7f' : '#ffffff';
-    CTX.strokeStyle = 'rgba(0,0,0,0.9)';
+    CTX.fillStyle = isActive ? GREEN_BRIGHT : GREEN_DIM;
+    CTX.strokeStyle = 'rgba(0,0,0,0.85)';
     const drawX = w.x - w.width / 2;
     CTX.strokeText(w.text, drawX, baselineY);
     CTX.fillText(w.text, drawX, baselineY);
@@ -483,25 +374,22 @@ function drawBall(line, words, activeIndex, t, baselineY) {
   const lastWord = words[words.length - 1];
 
   if (t < firstWord.start) {
-    // Entry: fly in from off-screen-left onto the first word.
     const entryDuration = Math.min(0.5, firstWord.start - line.start);
     const entryStart = firstWord.start - entryDuration;
-    if (t >= entryStart) {
+    if (t >= entryStart && entryDuration > 0) {
       const p = easeInOut(clamp((t - entryStart) / entryDuration, 0, 1));
       x = lerp(offLeft, firstWord.x, p);
       y = restY - Math.sin(Math.PI * p) * amplitude;
     }
-  } else if (t >= lastWord.start && activeIndex === words.length - 1) {
-    // Exit: bounce off the last word and fly off-screen-right.
+  } else if (activeIndex === words.length - 1) {
     const exitDuration = Math.min(0.5, line.end - lastWord.start);
-    const p = clamp((t - lastWord.start) / exitDuration, 0, 1);
-    if (p <= 1) {
+    if (exitDuration > 0) {
+      const p = clamp((t - lastWord.start) / exitDuration, 0, 1);
       const eased = easeInOut(p);
       x = lerp(lastWord.x, offRight, eased);
       y = restY - Math.sin(Math.PI * eased) * amplitude * 0.85;
     }
   } else if (activeIndex >= 0 && activeIndex < words.length - 1) {
-    // Interior hop from current word to the next.
     const a = words[activeIndex];
     const b = words[activeIndex + 1];
     const p = clamp((t - a.start) / (b.start - a.start), 0, 1);
@@ -513,35 +401,57 @@ function drawBall(line, words, activeIndex, t, baselineY) {
   if (x === null) return;
 
   CTX.beginPath();
-  CTX.fillStyle = '#00ff7f';
-  CTX.shadowColor = 'rgba(0,255,127,0.65)';
-  CTX.shadowBlur = 12;
+  CTX.fillStyle = GREEN_BRIGHT;
   CTX.arc(x, y, radius, 0, Math.PI * 2);
   CTX.fill();
-  CTX.shadowBlur = 0;
 }
 
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function lerp(a, b, t) { return a + (b - a) * t; }
-
 function drawFooterText() {
-  const y1 = Math.round(CANVAS.height * 0.9);
-  const y2 = y1 + Math.round(CANVAS.height * 0.032);
-  const size = Math.max(12, Math.round(CANVAS.width * 0.028));
+  const isPortrait = CANVAS.height >= CANVAS.width;
+  const marginRatio = isPortrait ? 0.88 : 0.8;
+  const fontSpec = (px) => `bold ${px}px "Courier New", Courier, monospace`;
 
-  CTX.font = `${size}px "Courier New", Courier, monospace`;
+  let footerSize = fitFontSizeToWidth([FOOTER_LINE_1, FOOTER_LINE_2], marginRatio, fontSpec);
+
+  const topY = lyricBaselineY() + lyricFontSize * 0.7;
+  const bottomPad = CANVAS.height * 0.035;
+  const availableH = CANVAS.height - topY - bottomPad;
+  const heightCap = Math.floor(availableH / 2.7);
+  footerSize = Math.max(14, Math.min(footerSize, heightCap));
+
+  const y1 = topY + footerSize * 0.95;
+  const y2 = y1 + footerSize * 1.25;
+
+  CTX.font = fontSpec(footerSize);
   CTX.textAlign = 'center';
-  CTX.fillStyle = '#ffffff';
-  CTX.fillText(FOOTER_LINE_1, CANVAS.width / 2, Math.min(y1, CANVAS.height - size * 2.6));
-  CTX.fillText(FOOTER_LINE_2, CANVAS.width / 2, Math.min(y2, CANVAS.height - size * 1.1));
+  CTX.lineWidth = Math.max(2, Math.round(footerSize * 0.07));
+  CTX.strokeStyle = 'rgba(0,0,0,0.85)';
+
+  CTX.fillStyle = GREEN_BRIGHT;
+  CTX.strokeText(FOOTER_LINE_1, CANVAS.width / 2, y1);
+  CTX.fillText(FOOTER_LINE_1, CANVAS.width / 2, y1);
+
+  CTX.fillStyle = GREEN_DIM;
+  CTX.strokeText(FOOTER_LINE_2, CANVAS.width / 2, y2);
+  CTX.fillText(FOOTER_LINE_2, CANVAS.width / 2, y2);
+
   CTX.textAlign = 'left';
 }
 
 // ---------------------------------------------------------------------
-// Main render loop
+// Main render loop — driven by requestVideoFrameCallback when available so
+// draw cadence tracks real camera frame arrivals (falls back to rAF).
 // ---------------------------------------------------------------------
+function scheduleNextFrame() {
+  if (typeof PREVIEW.requestVideoFrameCallback === 'function') {
+    PREVIEW.requestVideoFrameCallback(renderLoop);
+  } else {
+    requestAnimationFrame(renderLoop);
+  }
+}
+
 function renderLoop() {
-  requestAnimationFrame(renderLoop);
+  scheduleNextFrame();
   if (!CANVAS.width || !CANVAS.height || PREVIEW.readyState < 2) return;
 
   CTX.save();
@@ -550,14 +460,15 @@ function renderLoop() {
   CTX.drawImage(PREVIEW, 0, 0, CANVAS.width, CANVAS.height);
   CTX.restore();
 
-  updateFaceTracking();
-  drawMouthGag();
-
   if (appState === 'recording' && musicStartAudioTime !== null) {
     const t = audioCtx.currentTime - musicStartAudioTime;
-    if (t >= 0) drawLyricsAndBall(t);
-    drawFooterText();
+    if (t >= 0) {
+      drawLyricsAndBall(t);
+      drawFooterText();
+    }
   }
+
+  if (activeCaptureVideoTrack) activeCaptureVideoTrack.requestFrame();
 }
 
 // ---------------------------------------------------------------------
@@ -591,6 +502,10 @@ async function startSequence() {
     return;
   }
 
+  // Start capturing camera+mic immediately (well before the music begins)
+  // so the encoder is fully warmed up and there is zero risk of a startup
+  // delay throwing off the sync between video and the backing track.
+  beginRecording(ctx);
   await runCountIn(ctx);
 }
 
@@ -607,12 +522,8 @@ function runCountIn(ctx) {
       setTimeout(() => { COUNTDOWN.textContent = label; }, Math.max(0, (when - now) * 1000));
     });
 
-    const recordAt = now + 3 * BEAT_SEC; // 4th note (GO)
-    const musicAt = now + 4 * BEAT_SEC; // following downbeat
-
-    setTimeout(() => {
-      beginRecording(ctx, musicAt);
-    }, Math.max(0, (recordAt - now) * 1000));
+    const musicAt = now + 4 * BEAT_SEC; // downbeat following the 4-count
+    startMusic(ctx, musicAt);
 
     setTimeout(() => {
       COUNTDOWN.classList.add('hidden');
@@ -635,18 +546,33 @@ function playCountTone(ctx, when) {
   osc.stop(when + 0.18);
 }
 
-function beginRecording(ctx, musicStartTime) {
+function beginRecording(ctx) {
   appState = 'recording';
   HELPER_TEXT.textContent = 'Recording… press STOP when you’re done.';
 
   // ---- Audio graph ----
   recDestination = ctx.createMediaStreamDestination();
 
+  const recDelay = ctx.createDelay(1.0);
+  recDelay.delayTime.value = AV_SYNC_DELAY_SEC;
+
+  // Gentle limiter on the final recorded mix: keeps the boosted mic from
+  // clipping and helps glue voice + music together.
+  const recCompressor = ctx.createDynamicsCompressor();
+  recCompressor.threshold.value = -12;
+  recCompressor.knee.value = 18;
+  recCompressor.ratio.value = 3;
+  recCompressor.attack.value = 0.01;
+  recCompressor.release.value = 0.2;
+
+  recDelay.connect(recCompressor);
+  recCompressor.connect(recDestination);
+
   micSourceNode = ctx.createMediaStreamSource(cameraStream);
   micGainNode = ctx.createGain();
   micGainNode.gain.value = MIC_GAIN;
   micSourceNode.connect(micGainNode);
-  micGainNode.connect(recDestination);
+  micGainNode.connect(recDelay);
 
   const micAnalyser = ctx.createAnalyser();
   micAnalyser.fftSize = 512;
@@ -654,22 +580,23 @@ function beginRecording(ctx, musicStartTime) {
 
   musicSourceNode = ctx.createBufferSource();
   musicSourceNode.buffer = musicBuffer;
-  musicGainNode = ctx.createGain();
-  musicGainNode.gain.value = BASE_MUSIC_GAIN;
-  musicSourceNode.connect(musicGainNode);
-  musicGainNode.connect(recDestination);
-  musicGainNode.connect(ctx.destination); // audible during recording
 
-  musicSourceNode.start(musicStartTime);
-  musicStartAudioTime = musicStartTime;
-  musicSourceNode.onended = () => {
-    if (appState === 'recording') stopSequence();
-  };
+  musicLiveGainNode = ctx.createGain();
+  musicLiveGainNode.gain.value = MUSIC_LIVE_GAIN;
+  musicSourceNode.connect(musicLiveGainNode);
+  musicLiveGainNode.connect(ctx.destination); // audible during recording, never ducked
+
+  musicRecGainNode = ctx.createGain();
+  musicRecGainNode.gain.value = MUSIC_REC_BASE_GAIN;
+  musicSourceNode.connect(musicRecGainNode);
+  musicRecGainNode.connect(recDelay);
 
   runDuckingLoop(ctx, micAnalyser);
 
-  // ---- Video graph (composited canvas) ----
-  const canvasStream = CANVAS.captureStream(30);
+  // ---- Video graph (composited canvas, manual frame-accurate capture) ----
+  const { stream: canvasStream, manualTrack } = createCanvasCaptureStream();
+  activeCaptureVideoTrack = manualTrack;
+
   const finalStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
     ...recDestination.stream.getAudioTracks()
@@ -690,11 +617,29 @@ function beginRecording(ctx, musicStartTime) {
   mediaRecorder.start(200);
 }
 
+function startMusic(ctx, musicStartTime) {
+  musicSourceNode.start(musicStartTime);
+  musicStartAudioTime = musicStartTime;
+  musicSourceNode.onended = () => {
+    if (appState === 'recording') stopSequence();
+  };
+}
+
+function createCanvasCaptureStream() {
+  try {
+    const s = CANVAS.captureStream(0);
+    const track = s.getVideoTracks()[0];
+    if (track && typeof track.requestFrame === 'function') {
+      return { stream: s, manualTrack: track };
+    }
+  } catch (e) { /* fall through */ }
+  return { stream: CANVAS.captureStream(30), manualTrack: null };
+}
+
 function runDuckingLoop(ctx, analyser) {
   const data = new Uint8Array(analyser.fftSize);
-  const threshold = 0.045;
 
-  function tick() {
+  duckTimer = setInterval(() => {
     if (appState !== 'recording') return;
     analyser.getByteTimeDomainData(data);
     let sum = 0;
@@ -703,11 +648,10 @@ function runDuckingLoop(ctx, analyser) {
       sum += v * v;
     }
     const rms = Math.sqrt(sum / data.length);
-    const target = (rms > threshold ? DUCK_GAIN : 1) * BASE_MUSIC_GAIN;
-    musicGainNode.gain.setTargetAtTime(target, ctx.currentTime, rms > threshold ? 0.09 : 0.45);
-    duckRAF = requestAnimationFrame(tick);
-  }
-  duckRAF = requestAnimationFrame(tick);
+    const singing = rms > DUCK_THRESHOLD;
+    const target = singing ? MUSIC_REC_DUCK_GAIN : MUSIC_REC_BASE_GAIN;
+    musicRecGainNode.gain.setTargetAtTime(target, ctx.currentTime, singing ? 0.07 : 0.4);
+  }, 60);
 }
 
 function pickRecorderMimeType() {
@@ -726,7 +670,6 @@ function detectNativeMp4Support() {
     MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.42E01E,mp4a.40.2') ||
     MediaRecorder.isTypeSupported('video/mp4');
   if (!nativeMp4Supported) {
-    // Warm up ffmpeg.wasm in the background so conversion is fast later.
     getFFmpeg().catch((e) => console.warn('ffmpeg preload failed', e));
   }
 }
@@ -740,8 +683,9 @@ async function stopSequence() {
   RECORD_BTN.disabled = true;
   HELPER_TEXT.textContent = 'When you press START a timer will count you in.';
 
-  if (duckRAF) cancelAnimationFrame(duckRAF);
-  duckRAF = null;
+  if (duckTimer) clearInterval(duckTimer);
+  duckTimer = null;
+  activeCaptureVideoTrack = null;
 
   try { if (musicSourceNode) musicSourceNode.onended = null; musicSourceNode?.stop(); } catch (e) {}
   musicStartAudioTime = null;
@@ -752,7 +696,12 @@ async function stopSequence() {
   if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   await finalizePromise;
 
-  try { micSourceNode?.disconnect(); micGainNode?.disconnect(); musicGainNode?.disconnect(); } catch (e) {}
+  try {
+    micSourceNode?.disconnect();
+    micGainNode?.disconnect();
+    musicLiveGainNode?.disconnect();
+    musicRecGainNode?.disconnect();
+  } catch (e) {}
 
   const rawMime = mediaRecorder.mimeType || 'video/webm';
   const rawBlob = new Blob(recordedChunks, { type: rawMime });
@@ -784,7 +733,7 @@ async function processAndOfferSave(rawBlob, rawMime) {
   }
 
   const filename = `${OUTPUT_PREFIX}${Date.now()}.${ext}`;
-  presentResult(finalBlob, filename);
+  presentResult(finalBlob, filename, ext);
 }
 
 async function getFFmpeg() {
@@ -833,20 +782,23 @@ async function transcodeToMp4(blob) {
 // ---------------------------------------------------------------------
 let pendingBlob = null;
 let pendingFilename = null;
+let pendingExt = null;
 
 function showModal() {
   MODAL.classList.remove('hidden');
   MODAL_TITLE.textContent = 'Processing…';
   MODAL_SPINNER.classList.remove('hidden');
   RESULT_VIDEO.classList.add('hidden');
+  MODAL_SHARE_TIP.classList.add('hidden');
   MODAL_HINT.classList.add('hidden');
   SAVE_BTN.classList.add('hidden');
   RETRY_BTN.classList.add('hidden');
 }
 
-function presentResult(blob, filename) {
+function presentResult(blob, filename, ext) {
   pendingBlob = blob;
   pendingFilename = filename;
+  pendingExt = ext;
 
   if (resultObjectUrl) URL.revokeObjectURL(resultObjectUrl);
   resultObjectUrl = URL.createObjectURL(blob);
@@ -855,6 +807,7 @@ function presentResult(blob, filename) {
   MODAL_SPINNER.classList.add('hidden');
   RESULT_VIDEO.src = resultObjectUrl;
   RESULT_VIDEO.classList.remove('hidden');
+  MODAL_SHARE_TIP.classList.remove('hidden');
   MODAL_HINT.classList.remove('hidden');
   SAVE_BTN.classList.remove('hidden');
   RETRY_BTN.classList.remove('hidden');
@@ -862,16 +815,17 @@ function presentResult(blob, filename) {
 
 async function onSaveClicked() {
   if (!pendingBlob) return;
-  const file = new File([pendingBlob], pendingFilename, { type: pendingBlob.type });
+  const mime = pendingExt === 'mp4' ? 'video/mp4' : (pendingBlob.type || 'video/webm');
+  const file = new File([pendingBlob], pendingFilename, { type: mime });
 
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
+  try {
+    if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: pendingFilename });
       return;
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      console.warn('Share failed, falling back to download', e);
     }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    console.warn('Share failed, falling back to download', e);
   }
 
   const url = URL.createObjectURL(pendingBlob);
@@ -890,6 +844,7 @@ function resetForNewTake() {
   RESULT_VIDEO.removeAttribute('src');
   pendingBlob = null;
   pendingFilename = null;
+  pendingExt = null;
 
   appState = 'idle';
   RECORD_BTN.disabled = false;
@@ -898,5 +853,5 @@ function resetForNewTake() {
   RECORD_BTN.setAttribute('aria-pressed', 'false');
   HELPER_TEXT.textContent = 'When you press START a timer will count you in.';
 
-  fitCanvasToVideo();
+  fitFrameToVideo();
 }

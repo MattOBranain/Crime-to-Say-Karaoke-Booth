@@ -6,6 +6,9 @@
 <title>THE CRIME TO SAY KARAOKE CHALLENGE!</title>
 <meta name="description" content="Sing along, record, and share the Crime to Say Karaoke Challenge." />
 <link rel="icon" href="favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -18,7 +21,7 @@
     <p class="tagline">Sing, record, post!<br>Tag or DM <span class="handle">@MattOBranain</span></p>
   </header>
 
-  <section class="booth" aria-label="Camera preview with karaoke overlay">
+  <section class="booth" id="booth" aria-label="Camera preview with karaoke overlay">
     <div class="booth__frame" id="frame">
       <video id="preview" playsinline autoplay muted></video>
       <canvas id="stageCanvas"></canvas>
@@ -45,11 +48,6 @@
     </button>
 
     <p class="helper" id="helperText">When you press START a timer will count you in.</p>
-
-    <label class="gag-toggle" id="gagLabel">
-      <input type="checkbox" id="gagToggle" checked />
-      <span>UK Flag Mouth Gag Effect</span>
-    </label>
   </section>
 
   <section class="disclaimer">
@@ -68,7 +66,8 @@
     <p id="modalTitle" class="modal__title">Processing&hellip;</p>
     <div class="modal__spinner" id="modalSpinner" aria-hidden="true"></div>
     <video id="resultVideo" class="modal__video hidden" playsinline controls></video>
-    <p class="modal__hint hidden" id="modalHint">Tip: on iPhone you can also long-press the video above and choose &ldquo;Save Video&rdquo;.</p>
+    <p class="modal__share-tip hidden" id="modalShareTip">Share it! Use #Crime2Say, tag @MattOBranain, and challenge a friend.</p>
+    <p class="modal__hint hidden" id="modalHint">Tip: you can also long-press the video above and choose &ldquo;Save Video&rdquo;.</p>
     <div class="modal__actions">
       <button id="saveBtn" class="primary-btn hidden" type="button">Save Video</button>
       <button id="retryBtn" class="ghost-btn hidden" type="button">Record Again</button>
