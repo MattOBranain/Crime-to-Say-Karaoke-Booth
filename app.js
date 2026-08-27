@@ -21,15 +21,20 @@ const MUSIC_REC_BASE_GAIN = 0.5;
 const MUSIC_REC_DUCK_GAIN = 0.32;
 const DUCK_THRESHOLD = 0.035;
 
-// Small delay applied only to the *recorded* audio (mic+music), never to
-// live monitoring. Camera pipeline latency on phones typically runs the
-// displayed video a little behind the true moment of capture, so the
-// recorded audio is nudged later to match what the video actually shows.
-const AV_SYNC_DELAY_SEC = 0.12;
+// The mic's own capture pipeline (hardware buffer + OS + browser) adds real
+// latency before samples reach us, while the backing track is scheduled on
+// the audio clock with ~zero latency. Left uncompensated, the singer's
+// voice lands measurably late relative to the music in the recording even
+// though it sounded in-sync live. This delays only the *recorded* copy of
+// the music (never live monitoring, never the mic) so it lines back up
+// with when the voice actually arrives. Tune this if a device still drifts.
+const MUSIC_REC_SYNC_DELAY_SEC = 0.13;
 
 const MAX_CANVAS_DIM = 1280;
-const FOOTER_LINE_1 = "JOIN THE 'CRIME TO SAY' KARAOKE CHALLENGE";
-const FOOTER_LINE_2 = 'CRIME2SAY.UK';
+const TITLE_LINE_1 = 'CRIME TO SAY';
+const TITLE_LINE_2 = 'KARAOKE CHALLENGE';
+const END_LINE_1 = 'JOIN THE CHALLENGE AT:';
+const END_LINE_2 = 'CRIME2SAY.UK';
 
 const GREEN_BRIGHT = '#00ff7f';
 const GREEN_DIM = '#0f8a4c';
@@ -55,7 +60,6 @@ const MODAL_TITLE = document.getElementById('modalTitle');
 const MODAL_SPINNER = document.getElementById('modalSpinner');
 const RESULT_VIDEO = document.getElementById('resultVideo');
 const MODAL_SHARE_TIP = document.getElementById('modalShareTip');
-const MODAL_HINT = document.getElementById('modalHint');
 const SAVE_BTN = document.getElementById('saveBtn');
 const RETRY_BTN = document.getElementById('retryBtn');
 
@@ -116,7 +120,11 @@ async function initCamera() {
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 1280 } },
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      // Deliberately no echoCancellation/noiseSuppression/autoGainControl:
+      // that adaptive processing adds latency and, on several phones, was
+      // intermittently gating/dropping the mic when it heard the loud
+      // backing track as "echo" to cancel. We control levels ourselves.
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
     });
 
     PREVIEW.srcObject = cameraStream;
@@ -150,6 +158,9 @@ function fitFrameToVideo() {
   if (!vw || !vh) return;
   if (appState === 'recording' || appState === 'countingIn') return; // don't resize mid-take
 
+  lastKnownVW = vw;
+  lastKnownVH = vh;
+
   let cw = vw;
   let ch = vh;
   if (Math.max(cw, ch) > MAX_CANVAS_DIM) {
@@ -178,6 +189,18 @@ function fitFrameToVideo() {
 
 window.addEventListener('resize', () => { if (appState === 'idle') fitFrameToVideo(); });
 window.addEventListener('orientationchange', () => { if (appState === 'idle') fitFrameToVideo(); });
+
+// Many mobile browsers don't reliably fire resize/orientationchange when the
+// camera's own reported dimensions change on rotation, so poll for it too
+// (cheap, and only while idle/pre-recording).
+let lastKnownVW = 0;
+let lastKnownVH = 0;
+setInterval(() => {
+  if (appState !== 'idle') return;
+  if (PREVIEW.videoWidth && (PREVIEW.videoWidth !== lastKnownVW || PREVIEW.videoHeight !== lastKnownVH)) {
+    fitFrameToVideo();
+  }
+}, 400);
 
 // ---------------------------------------------------------------------
 // LRC parsing (enhanced/word-level LRC)
@@ -330,7 +353,7 @@ function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
 
 function lyricBaselineY() {
-  return Math.round(CANVAS.height * 0.58);
+  return Math.round(CANVAS.height * 0.8);
 }
 
 function drawLyricsAndBall(t) {
@@ -406,36 +429,36 @@ function drawBall(line, words, activeIndex, t, baselineY) {
   CTX.fill();
 }
 
-function drawFooterText() {
+// Centered two-line title/end card, used for the moment before the music
+// kicks in and the moment after the last lyric — not shown during singing.
+function drawCenteredCard(line1, line2) {
   const isPortrait = CANVAS.height >= CANVAS.width;
   const marginRatio = isPortrait ? 0.88 : 0.8;
-  const fontSpec = (px) => `bold ${px}px "Courier New", Courier, monospace`;
+  const fontSpec = (px) => `bold ${px}px Arial`;
 
-  let footerSize = fitFontSizeToWidth([FOOTER_LINE_1, FOOTER_LINE_2], marginRatio, fontSpec);
+  let size = fitFontSizeToWidth([line1, line2], marginRatio, fontSpec);
+  size = Math.min(size, Math.round(CANVAS.height * (isPortrait ? 0.11 : 0.14)));
+  size = Math.max(size, Math.round(CANVAS.width * 0.045));
 
-  const topY = lyricBaselineY() + lyricFontSize * 0.7;
-  const bottomPad = CANVAS.height * 0.035;
-  const availableH = CANVAS.height - topY - bottomPad;
-  const heightCap = Math.floor(availableH / 2.7);
-  footerSize = Math.max(14, Math.min(footerSize, heightCap));
+  const gap = size * 1.35;
+  const centerY = CANVAS.height / 2;
+  const y1 = centerY - gap / 2;
+  const y2 = centerY + gap / 2;
 
-  const y1 = topY + footerSize * 0.95;
-  const y2 = y1 + footerSize * 1.25;
-
-  CTX.font = fontSpec(footerSize);
+  CTX.font = fontSpec(size);
   CTX.textAlign = 'center';
-  CTX.lineWidth = Math.max(2, Math.round(footerSize * 0.07));
+  CTX.textBaseline = 'middle';
+  CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
-
   CTX.fillStyle = GREEN_BRIGHT;
-  CTX.strokeText(FOOTER_LINE_1, CANVAS.width / 2, y1);
-  CTX.fillText(FOOTER_LINE_1, CANVAS.width / 2, y1);
 
-  CTX.fillStyle = GREEN_DIM;
-  CTX.strokeText(FOOTER_LINE_2, CANVAS.width / 2, y2);
-  CTX.fillText(FOOTER_LINE_2, CANVAS.width / 2, y2);
+  CTX.strokeText(line1, CANVAS.width / 2, y1);
+  CTX.fillText(line1, CANVAS.width / 2, y1);
+  CTX.strokeText(line2, CANVAS.width / 2, y2);
+  CTX.fillText(line2, CANVAS.width / 2, y2);
 
   CTX.textAlign = 'left';
+  CTX.textBaseline = 'alphabetic';
 }
 
 // ---------------------------------------------------------------------
@@ -462,9 +485,13 @@ function renderLoop() {
 
   if (appState === 'recording' && musicStartAudioTime !== null) {
     const t = audioCtx.currentTime - musicStartAudioTime;
-    if (t >= 0) {
+    const lastLineEnd = lyricLines.length ? lyricLines[lyricLines.length - 1].end : Infinity;
+    if (t < 0) {
+      drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2);
+    } else if (t >= lastLineEnd) {
+      drawCenteredCard(END_LINE_1, END_LINE_2);
+    } else {
       drawLyricsAndBall(t);
-      drawFooterText();
     }
   }
 
@@ -548,13 +575,10 @@ function playCountTone(ctx, when) {
 
 function beginRecording(ctx) {
   appState = 'recording';
-  HELPER_TEXT.textContent = 'Recording… press STOP when you’re done.';
+  HELPER_TEXT.textContent = 'Recording…';
 
   // ---- Audio graph ----
   recDestination = ctx.createMediaStreamDestination();
-
-  const recDelay = ctx.createDelay(1.0);
-  recDelay.delayTime.value = AV_SYNC_DELAY_SEC;
 
   // Gentle limiter on the final recorded mix: keeps the boosted mic from
   // clipping and helps glue voice + music together.
@@ -564,15 +588,15 @@ function beginRecording(ctx) {
   recCompressor.ratio.value = 3;
   recCompressor.attack.value = 0.01;
   recCompressor.release.value = 0.2;
-
-  recDelay.connect(recCompressor);
   recCompressor.connect(recDestination);
 
+  // Mic is the timing reference: it already arrives with whatever capture
+  // latency the device has, so it goes straight into the mix undelayed.
   micSourceNode = ctx.createMediaStreamSource(cameraStream);
   micGainNode = ctx.createGain();
   micGainNode.gain.value = MIC_GAIN;
   micSourceNode.connect(micGainNode);
-  micGainNode.connect(recDelay);
+  micGainNode.connect(recCompressor);
 
   const micAnalyser = ctx.createAnalyser();
   micAnalyser.fftSize = 512;
@@ -584,12 +608,18 @@ function beginRecording(ctx) {
   musicLiveGainNode = ctx.createGain();
   musicLiveGainNode.gain.value = MUSIC_LIVE_GAIN;
   musicSourceNode.connect(musicLiveGainNode);
-  musicLiveGainNode.connect(ctx.destination); // audible during recording, never ducked
+  musicLiveGainNode.connect(ctx.destination); // audible during recording, never ducked, never delayed
+
+  // The recorded copy of the music is nudged later to match the mic's
+  // capture latency (see MUSIC_REC_SYNC_DELAY_SEC above).
+  const musicRecDelay = ctx.createDelay(1.0);
+  musicRecDelay.delayTime.value = MUSIC_REC_SYNC_DELAY_SEC;
+  musicRecDelay.connect(recCompressor);
 
   musicRecGainNode = ctx.createGain();
   musicRecGainNode.gain.value = MUSIC_REC_BASE_GAIN;
   musicSourceNode.connect(musicRecGainNode);
-  musicRecGainNode.connect(recDelay);
+  musicRecGainNode.connect(musicRecDelay);
 
   runDuckingLoop(ctx, micAnalyser);
 
@@ -681,7 +711,7 @@ async function stopSequence() {
   RECORD_LABEL.textContent = 'START';
   RECORD_BTN.setAttribute('aria-pressed', 'false');
   RECORD_BTN.disabled = true;
-  HELPER_TEXT.textContent = 'When you press START a timer will count you in.';
+  HELPER_TEXT.textContent = '';
 
   if (duckTimer) clearInterval(duckTimer);
   duckTimer = null;
@@ -790,7 +820,6 @@ function showModal() {
   MODAL_SPINNER.classList.remove('hidden');
   RESULT_VIDEO.classList.add('hidden');
   MODAL_SHARE_TIP.classList.add('hidden');
-  MODAL_HINT.classList.add('hidden');
   SAVE_BTN.classList.add('hidden');
   RETRY_BTN.classList.add('hidden');
 }
@@ -803,12 +832,11 @@ function presentResult(blob, filename, ext) {
   if (resultObjectUrl) URL.revokeObjectURL(resultObjectUrl);
   resultObjectUrl = URL.createObjectURL(blob);
 
-  MODAL_TITLE.textContent = 'Your video is ready!';
+  MODAL_TITLE.textContent = '';
   MODAL_SPINNER.classList.add('hidden');
   RESULT_VIDEO.src = resultObjectUrl;
   RESULT_VIDEO.classList.remove('hidden');
   MODAL_SHARE_TIP.classList.remove('hidden');
-  MODAL_HINT.classList.remove('hidden');
   SAVE_BTN.classList.remove('hidden');
   RETRY_BTN.classList.remove('hidden');
 }
@@ -851,7 +879,7 @@ function resetForNewTake() {
   RECORD_BTN.classList.remove('is-active');
   RECORD_LABEL.textContent = 'START';
   RECORD_BTN.setAttribute('aria-pressed', 'false');
-  HELPER_TEXT.textContent = 'When you press START a timer will count you in.';
+  HELPER_TEXT.textContent = '';
 
   fitFrameToVideo();
 }
