@@ -88,7 +88,6 @@ let musicSourceNode = null;
 let duckTimer = null;
 let activeCaptureVideoTrack = null;
 
-let nativeMp4Supported = false;
 let ffmpegPromise = null;
 
 let resultObjectUrl = null;
@@ -100,7 +99,7 @@ let drawLoopStarted = false;
 window.addEventListener('DOMContentLoaded', () => {
   loadLyrics();
   preloadMusic();
-  detectNativeMp4Support();
+  warmUpFFmpeg();
   initCamera();
 });
 
@@ -157,9 +156,13 @@ async function initCamera() {
   }
 }
 
-// Sizes the on-screen preview frame (exact pixels, not CSS aspect-ratio) so
-// it always matches the camera's true orientation without ever squashing,
-// and sizes the recording canvas buffer to match.
+// Sizes the on-screen preview frame (exact pixels, not CSS aspect-ratio) and
+// the recording canvas buffer. The *target shape* always follows the actual
+// viewport orientation, never the camera's own reported dimensions — some
+// browsers don't honor portrait/landscape hints reliably, and trusting the
+// camera's aspect ratio directly can produce a sideways/cropped recording.
+// The camera frame is then cropped-to-fill that shape (like CSS
+// object-fit: cover) when drawn, in drawMirroredCoverVideo().
 function fitFrameToVideo() {
   const vw = PREVIEW.videoWidth;
   const vh = PREVIEW.videoHeight;
@@ -169,12 +172,14 @@ function fitFrameToVideo() {
   lastKnownVW = vw;
   lastKnownVH = vh;
 
-  let cw = vw;
-  let ch = vh;
-  if (Math.max(cw, ch) > MAX_CANVAS_DIM) {
-    const scale = MAX_CANVAS_DIM / Math.max(cw, ch);
-    cw = Math.round(cw * scale);
-    ch = Math.round(ch * scale);
+  const viewportAspect = window.innerWidth / window.innerHeight;
+  let cw, ch;
+  if (viewportAspect <= 1) {
+    ch = MAX_CANVAS_DIM;
+    cw = Math.max(2, Math.round(ch * viewportAspect));
+  } else {
+    cw = MAX_CANVAS_DIM;
+    ch = Math.max(2, Math.round(cw / viewportAspect));
   }
   CANVAS.width = cw;
   CANVAS.height = ch;
@@ -184,10 +189,10 @@ function fitFrameToVideo() {
   const availW = BOOTH.clientWidth;
 
   let boxW = availW;
-  let boxH = boxW * (vh / vw);
+  let boxH = boxW * (ch / cw);
   if (boxH > heightCapPx) {
     boxH = heightCapPx;
-    boxW = boxH * (vw / vh);
+    boxW = boxH * (cw / ch);
   }
   FRAME.style.width = `${Math.round(boxW)}px`;
   FRAME.style.height = `${Math.round(boxH)}px`;
@@ -482,15 +487,43 @@ function scheduleNextFrame() {
   }
 }
 
+// Mirrors the camera feed (selfie view) and crops it to fill the canvas
+// exactly, like CSS object-fit: cover — never stretches, regardless of
+// whatever aspect ratio the camera itself happens to report.
+function drawMirroredCoverVideo() {
+  const vw = PREVIEW.videoWidth;
+  const vh = PREVIEW.videoHeight;
+  if (!vw || !vh) return;
+  const cw = CANVAS.width;
+  const ch = CANVAS.height;
+  const videoAspect = vw / vh;
+  const canvasAspect = cw / ch;
+
+  let sx, sy, sw, sh;
+  if (videoAspect > canvasAspect) {
+    sh = vh;
+    sw = vh * canvasAspect;
+    sx = (vw - sw) / 2;
+    sy = 0;
+  } else {
+    sw = vw;
+    sh = vw / canvasAspect;
+    sx = 0;
+    sy = (vh - sh) / 2;
+  }
+
+  CTX.save();
+  CTX.translate(cw, 0);
+  CTX.scale(-1, 1);
+  CTX.drawImage(PREVIEW, sx, sy, sw, sh, 0, 0, cw, ch);
+  CTX.restore();
+}
+
 function renderLoop() {
   scheduleNextFrame();
   if (!CANVAS.width || !CANVAS.height || PREVIEW.readyState < 2) return;
 
-  CTX.save();
-  CTX.translate(CANVAS.width, 0);
-  CTX.scale(-1, 1);
-  CTX.drawImage(PREVIEW, 0, 0, CANVAS.width, CANVAS.height);
-  CTX.restore();
+  drawMirroredCoverVideo();
 
   if (appState === 'recording' && musicStartAudioTime !== null) {
     const t = audioCtx.currentTime - musicStartAudioTime;
@@ -704,13 +737,9 @@ function pickRecorderMimeType() {
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || 'video/webm';
 }
 
-function detectNativeMp4Support() {
-  nativeMp4Supported =
-    MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.42E01E,mp4a.40.2') ||
-    MediaRecorder.isTypeSupported('video/mp4');
-  // Warm up ffmpeg in the background regardless: some browsers claim mp4
-  // support but hand back a file that won't play, and we repair those via
-  // ffmpeg too (see blobPlaysBack), so it's worth having ready either way.
+function warmUpFFmpeg() {
+  // Every recording gets remuxed through ffmpeg before saving (see
+  // processAndOfferSave), so this is always worth having ready ahead of time.
   getFFmpeg().catch((e) => console.warn('ffmpeg preload failed', e));
 }
 
@@ -754,52 +783,29 @@ async function stopSequence() {
 // Post-processing / export
 // ---------------------------------------------------------------------
 
-// Some browsers report MediaRecorder support for "video/mp4" but hand back
-// a file that doesn't actually play (missing/broken moov atom etc). Rather
-// than trust the claimed mimeType, verify the file actually loads before
-// treating it as done — and if it doesn't, repair it by remuxing through
-// ffmpeg the same way a webm recording would be converted.
-function blobPlaysBack(blob) {
-  return new Promise((resolve) => {
-    const v = document.createElement('video');
-    v.preload = 'metadata';
-    v.muted = true;
-    const url = URL.createObjectURL(blob);
-    const finish = (ok) => { URL.revokeObjectURL(url); resolve(ok); };
-    const timer = setTimeout(() => finish(false), 4000);
-    v.onloadedmetadata = () => { clearTimeout(timer); finish(isFinite(v.duration) && v.duration > 0); };
-    v.onerror = () => { clearTimeout(timer); finish(false); };
-    v.src = url;
-  });
-}
-
+// MediaRecorder output — mp4 or webm — very often lacks a properly
+// finalized duration/moov atom, since the browser writes it incrementally
+// without knowing the final length up front. In-browser blob playback (and
+// thumbnail generation) is lenient about this and plays it anyway, which is
+// exactly why a "does it play in a hidden <video>" check isn't trustworthy —
+// it can pass while a strict native player (like iOS Photos) refuses the
+// same file. So every recording is unconditionally remuxed through ffmpeg
+// before it's offered for saving, which forces a clean, finalized
+// container. mp4 sources use a fast stream-copy remux (no quality loss, no
+// re-encode); webm sources need a full re-encode since MP4 can't contain
+// VP8/Opus directly.
 async function processAndOfferSave(rawBlob, rawMime) {
   let finalBlob = rawBlob;
-  let ext = 'webm';
-  let needsTranscode = !rawMime.includes('mp4');
+  let ext = 'mp4';
 
-  if (!needsTranscode) {
-    MODAL_TITLE.textContent = 'Finishing up…';
-    const ok = await blobPlaysBack(rawBlob);
-    if (!ok) {
-      console.warn('Recorded mp4 failed a playback check, repairing via ffmpeg');
-      needsTranscode = true;
-    }
-  }
-
-  if (!needsTranscode) {
-    ext = 'mp4';
-  } else {
-    MODAL_TITLE.textContent = 'Converting to MP4…';
-    try {
-      finalBlob = await transcodeToMp4(rawBlob);
-      ext = 'mp4';
-    } catch (e) {
-      console.warn('MP4 conversion failed, offering original file', e);
-      MODAL_TITLE.textContent = 'Ready! (WebM format)';
-      ext = rawMime.includes('webm') ? 'webm' : 'mp4';
-      finalBlob = rawBlob;
-    }
+  MODAL_TITLE.textContent = 'Finishing up…';
+  try {
+    finalBlob = await transcodeToMp4(rawBlob);
+  } catch (e) {
+    console.warn('MP4 remux/conversion failed, offering original file', e);
+    MODAL_TITLE.textContent = rawMime.includes('mp4') ? 'Ready!' : 'Ready! (WebM format)';
+    ext = rawMime.includes('mp4') ? 'mp4' : rawMime.includes('webm') ? 'webm' : 'mp4';
+    finalBlob = rawBlob;
   }
 
   const filename = `${OUTPUT_PREFIX}${Date.now()}.${ext}`;
@@ -823,24 +829,43 @@ async function getFFmpeg() {
   return ffmpegPromise;
 }
 
+const REENCODE_ARGS = [
+  '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+  '-c:a', 'aac', '-b:a', '192k',
+  '-movflags', '+faststart',
+  'output.mp4'
+];
+
 async function transcodeToMp4(blob) {
   const ffmpeg = await getFFmpeg();
-  const inputName = 'input' + (blob.type.includes('webm') ? '.webm' : blob.type.includes('mp4') ? '.mp4' : '.mov');
+  const isMp4Source = blob.type.includes('mp4');
+  const inputName = 'input' + (isMp4Source ? '.mp4' : blob.type.includes('webm') ? '.webm' : '.mov');
   const buf = new Uint8Array(await blob.arrayBuffer());
   await ffmpeg.writeFile(inputName, buf);
 
   ffmpeg.on('progress', ({ progress }) => {
     const pct = Math.round(Math.min(1, Math.max(0, progress)) * 100);
-    MODAL_TITLE.textContent = `Converting to MP4… ${pct}%`;
+    MODAL_TITLE.textContent = `Finishing up… ${pct}%`;
   });
 
-  await ffmpeg.exec([
-    '-i', inputName,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '192k',
-    '-movflags', '+faststart',
-    'output.mp4'
-  ]);
+  if (isMp4Source) {
+    // Fast path: just remux (no re-encode) to force a clean, finalized
+    // container — this is what actually fixes native-player compatibility.
+    // ffmpeg.wasm reports failure via a non-zero exit code rather than a
+    // thrown exception, so check both.
+    let code;
+    try {
+      code = await ffmpeg.exec(['-i', inputName, '-c', 'copy', '-movflags', '+faststart', 'output.mp4']);
+    } catch (e) {
+      console.warn('Stream-copy remux threw, falling back to re-encode', e);
+    }
+    if (code !== 0) {
+      console.warn(`Stream-copy remux exited ${code}, falling back to re-encode`);
+      await ffmpeg.exec(['-i', inputName, ...REENCODE_ARGS]);
+    }
+  } else {
+    await ffmpeg.exec(['-i', inputName, ...REENCODE_ARGS]);
+  }
 
   const data = await ffmpeg.readFile('output.mp4');
   try { await ffmpeg.deleteFile(inputName); await ffmpeg.deleteFile('output.mp4'); } catch (e) {}
