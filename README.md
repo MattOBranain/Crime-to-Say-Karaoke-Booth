@@ -1,2 +1,2 @@
-# Crime-to-Say-Karaoke-Challange
-A fun, group, music challenge to help de-proscribe Pal Action!
+# Crime-to-Say-Karaoke-Challenge
+A fun music challenge to help de-proscribe Palestine Action.
