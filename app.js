@@ -1,5 +1,5 @@
 // =====================================================
-// Crime to Say Karaoke – Final polish version
+// Crime to Say Karaoke – Sync + Ball + First words fix
 // =====================================================
 
 const PREVIEW = document.getElementById('preview');
@@ -34,16 +34,8 @@ const B3_FREQ = 246.94;
 async function initCamera() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
     PREVIEW.srcObject = stream;
     PREVIEW.onloadedmetadata = () => {
@@ -62,15 +54,15 @@ function updateAspectRatio() {
   WRAPPER.style.aspectRatio = PREVIEW.videoWidth / PREVIEW.videoHeight;
 }
 
-// ---------- Much more robust LRC parser ----------
+// ---------- Aggressive LRC parser (fixes missing IN / I) ----------
 async function loadLyrics() {
   try {
     const res = await fetch('crime-2-say-oke-shortest.lrc');
     const text = await res.text();
     lyrics = parseEnhancedLRC(text);
-    console.log('Parsed lyrics:', lyrics); // helpful for debugging
+    console.log('Parsed lines:', lyrics.map(l => l.words.map(w => w.text).join(' ')));
   } catch (e) {
-    console.error('LRC load failed', e);
+    console.error('LRC failed', e);
   }
 }
 
@@ -80,36 +72,49 @@ function parseEnhancedLRC(text) {
 
   for (let raw of lines) {
     raw = raw.trim();
-    if (!raw.startsWith('[')) continue;
+    if (!raw) continue;
 
-    const match = raw.match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/);
-    if (!match) continue;
+    // Match [mm:ss.xx] followed by anything
+    const m = raw.match(/^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/);
+    if (!m) continue;
 
-    const start = parseInt(match[1]) * 60 + parseFloat(match[2]);
-    let content = match[3].trim();
+    const start = parseInt(m[1]) * 60 + parseFloat(m[2]);
+    let content = m[3].trim();
 
     const words = [];
 
-    // Primary: enhanced tags <mm:ss.xx>word
-    const wordRe = /<(\d+):(\d+(?:\.\d+)?)>([^<]*)/g;
-    let wm;
-    let foundEnhanced = false;
+    // Try enhanced format first
+    const re = /<(\d+):(\d+(?:\.\d+)?)>([^<]*)/g;
+    let match;
+    let lastIndex = 0;
+    let hasEnhanced = false;
 
-    while ((wm = wordRe.exec(content)) !== null) {
-      foundEnhanced = true;
-      const wStart = parseInt(wm[1]) * 60 + parseFloat(wm[2]);
-      let word = wm[3].trim();
-      // Remove any trailing punctuation that sometimes sticks
-      if (word) words.push({ text: word, start: wStart });
+    while ((match = re.exec(content)) !== null) {
+      hasEnhanced = true;
+      const wStart = parseInt(match[1]) * 60 + parseFloat(match[2]);
+      let word = match[3].replace(/^\s+|\s+$/g, '');
+      if (word) {
+        words.push({ text: word, start: wStart });
+      }
     }
 
-    // Fallback – treat whole line as one word or split on spaces
-    if (!foundEnhanced && content) {
-      // Keep the original first characters
-      words.push({ text: content, start });
+    // Critical fallback – if no enhanced tags or first word missing,
+    // force-split the plain text so "IN" and "I" are never lost
+    if (!hasEnhanced || words.length === 0) {
+      // Remove any leftover <tags>
+      const plain = content.replace(/<[^>]+>/g, '').trim();
+      if (plain) {
+        // Split on spaces but keep short words
+        plain.split(/\s+/).forEach((w, i) => {
+          if (w) words.push({
+            text: w,
+            start: start + i * 0.3 // rough fallback timing
+          });
+        });
+      }
     }
 
-    if (words.length > 0) {
+    if (words.length) {
       result.push({ start, words });
     }
   }
@@ -144,30 +149,31 @@ function startCountIn() {
     }, i * BEAT_DURATION * 1000);
   });
 
+  // BOTH recording and music start together on GO
   setTimeout(() => {
     COUNT_DISPLAY.classList.add('hidden');
     beginRecording();
   }, 3 * BEAT_DURATION * 1000);
 }
 
-// ---------- Recording ----------
+// ---------- Recording (music lowered further) ----------
 async function beginRecording() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   destinationNode = audioCtx.createMediaStreamDestination();
 
-  // Mic – full level, clean
+  // Mic full level
   micSource = audioCtx.createMediaStreamSource(stream);
   micSource.connect(destinationNode);
 
-  // Music – reduced
+  // Music – lowered another ~3 dB
   audioElement = new Audio('crime-2-say-oke-shortest.mp3');
   audioElement.crossOrigin = 'anonymous';
   await audioElement.play();
 
   musicSource = audioCtx.createMediaElementSource(audioElement);
   musicGain = audioCtx.createGain();
-  musicGain.gain.value = 0.52;
+  musicGain.gain.value = 0.40; // significantly quieter than voice
   musicSource.connect(musicGain);
   musicGain.connect(destinationNode);
   musicGain.connect(audioCtx.destination);
@@ -179,15 +185,13 @@ async function beginRecording() {
   ]);
 
   recordedChunks = [];
-
   const candidates = [
     'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
     'video/mp4',
     'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
     'video/webm'
   ];
-  let chosen = candidates.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const chosen = candidates.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
 
   mediaRecorder = new MediaRecorder(finalStream, {
     mimeType: chosen,
@@ -196,7 +200,7 @@ async function beginRecording() {
   });
 
   mediaRecorder.ondataavailable = e => {
-    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    if (e.data?.size > 0) recordedChunks.push(e.data);
   };
 
   mediaRecorder.onstop = () => {
@@ -222,26 +226,18 @@ function cleanupAfterStop() {
   isRecording = false;
   RECORD_BTN.classList.remove('recording');
   RECORD_BTN.querySelector('.btn-text').textContent = 'REC';
-
-  if (audioElement) {
-    audioElement.pause();
-    audioElement = null;
-  }
+  if (audioElement) { audioElement.pause(); audioElement = null; }
   try { micSource?.disconnect(); } catch(e){}
   try { musicSource?.disconnect(); } catch(e){}
   try { musicGain?.disconnect(); } catch(e){}
-
-  if (stream) {
-    stream.getAudioTracks().forEach(t => t.enabled = false);
-  }
+  if (stream) stream.getAudioTracks().forEach(t => t.enabled = false);
 }
 
-// ---------- Save modal + best possible “Save to Photos” ----------
+// ---------- Save modal ----------
 function showSaveModal() {
   MODAL_STATUS.textContent = 'CONVERTING…';
   SAVE_BTN.classList.add('hidden');
   MODAL.classList.remove('hidden');
-
   setTimeout(() => {
     MODAL_STATUS.textContent = 'Ready to save';
     SAVE_BTN.classList.remove('hidden');
@@ -250,28 +246,19 @@ function showSaveModal() {
 
 SAVE_BTN.addEventListener('click', async () => {
   if (!finalBlob) return;
-
   const ext = finalMime.includes('mp4') ? 'mp4' : 'webm';
   const filename = `Crime2Say-${Date.now()}.${ext}`;
   const file = new File([finalBlob], filename, { type: finalMime });
 
-  // Best path: Web Share API (gives “Save Video” on many phones)
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({
-        files: [file],
-        title: 'Crime to Say Karaoke'
-      });
+      await navigator.share({ files: [file], title: 'Crime to Say Karaoke' });
       MODAL.classList.add('hidden');
       if (stream) stream.getAudioTracks().forEach(t => t.enabled = true);
       return;
-    } catch (err) {
-      // User cancelled or share failed → fall through to download
-      console.log('Share cancelled or failed', err);
-    }
+    } catch (err) {}
   }
 
-  // Fallback: classic download
   const url = URL.createObjectURL(finalBlob);
   const a = document.createElement('a');
   a.href = url;
@@ -283,11 +270,10 @@ SAVE_BTN.addEventListener('click', async () => {
     URL.revokeObjectURL(url);
     MODAL.classList.add('hidden');
   }, 300);
-
   if (stream) stream.getAudioTracks().forEach(t => t.enabled = true);
 });
 
-// ---------- Drawing + improved bouncing ball ----------
+// ---------- Drawing ----------
 function resizeCanvas() {
   if (!PREVIEW.videoWidth) return;
   CANVAS.width = PREVIEW.videoWidth;
@@ -315,120 +301,42 @@ function drawLyricsAndBall(time) {
   if (!current || !current.words.length) return;
 
   const isPortrait = CANVAS.height >= CANVAS.width;
-  const fontSize = Math.max(22, Math.floor(isPortrait ? CANVAS.width / 15.5 : CANVAS.height / 17));
-  const paddingX = isPortrait ? CANVAS.width * 0.085 : CANVAS.width * 0.065;
+  let fontSize = Math.max(20, Math.floor(isPortrait ? CANVAS.width / 16 : CANVAS.height / 18));
+  const paddingX = isPortrait ? CANVAS.width * 0.09 : CANVAS.width * 0.07;
   const maxWidth = CANVAS.width - paddingX * 2;
 
+  // Measure and scale down if needed so line always fits with equal margins
   CTX.font = `bold ${fontSize}px Arial`;
+  let totalWidth = 0;
+  current.words.forEach(w => totalWidth += CTX.measureText(w.text + ' ').width);
+
+  if (totalWidth > maxWidth) {
+    fontSize = Math.floor(fontSize * (maxWidth / totalWidth));
+    CTX.font = `bold ${fontSize}px Arial`;
+    totalWidth = 0;
+    current.words.forEach(w => totalWidth += CTX.measureText(w.text + ' ').width);
+  }
+
+  const startX = (CANVAS.width - totalWidth) / 2; // perfect centre
+  const y = CANVAS.height * 0.77;
+
   CTX.textAlign = 'left';
   CTX.textBaseline = 'middle';
   CTX.lineWidth = Math.max(2.5, fontSize / 11);
   CTX.strokeStyle = '#000';
 
-  // Simple single-line for now (most karaoke lines fit)
-  const words = current.words;
-  let totalWidth = 0;
-  words.forEach(w => totalWidth += CTX.measureText(w.text + ' ').width);
-
-  let startX = (CANVAS.width - totalWidth) / 2;
-  startX = Math.max(paddingX, Math.min(startX, CANVAS.width - totalWidth - paddingX));
-
-  const y = CANVAS.height * 0.78;
-
-  // Draw words + collect positions for the ball
-  const wordPositions = [];
+  // Draw words + store centres for the ball
+  const centres = [];
   let x = startX;
 
-  words.forEach((word, idx) => {
-    const wWidth = CTX.measureText(word.text).width;
-    const isActive = time >= word.start && (idx === words.length - 1 || time < words[idx + 1].start);
+  current.words.forEach((word, idx) => {
+    const w = CTX.measureText(word.text).width;
+    const isActive = time >= word.start &&
+      (idx === current.words.length - 1 || time < current.words[idx + 1].start);
 
     CTX.fillStyle = isActive ? '#00FF7F' : '#ffffff';
     CTX.strokeText(word.text, x, y);
     CTX.fillText(word.text, x, y);
 
-    wordPositions.push({
-      centre: x + wWidth / 2,
-      start: word.start,
-      end: (idx < words.length - 1) ? words[idx + 1].start : word.start + 0.8
-    });
-
-    x += wWidth + CTX.measureText(' ').width;
-  });
-
-  // ===== Traditional karaoke bouncing ball =====
-  if (wordPositions.length > 0) {
-    let ballX = wordPositions[0].centre;
-    let ballY = y - fontSize * 0.75;
-    let found = false;
-
-    for (let i = 0; i < wordPositions.length; i++) {
-      const curr = wordPositions[i];
-      const next = wordPositions[i + 1];
-
-      if (time >= curr.start && (!next || time < next.start)) {
-        // Sitting on this word
-        ballX = curr.centre;
-        ballY = y - fontSize * 0.75;
-        found = true;
-        break;
-      }
-
-      if (next && time >= curr.start && time < next.start) {
-        // Travelling between curr and next
-        const progress = (time - curr.start) / (next.start - curr.start);
-        const eased = progress; // linear is fine, or use ease
-
-        // Horizontal
-        ballX = curr.centre + (next.centre - curr.centre) * eased;
-
-        // Parabolic arc (high bounce)
-        const arcHeight = fontSize * 1.8;
-        ballY = (y - fontSize * 0.75) - Math.sin(progress * Math.PI) * arcHeight;
-        found = true;
-        break;
-      }
-    }
-
-    if (found) {
-      CTX.beginPath();
-      CTX.arc(ballX, ballY, fontSize * 0.28, 0, Math.PI * 2);
-      CTX.fillStyle = '#00FF7F';
-      CTX.fill();
-      CTX.lineWidth = 2.5;
-      CTX.strokeStyle = '#000';
-      CTX.stroke();
-    }
-  }
-
-  // Extra text – larger, same margins, no red outline
-  const small = Math.floor(fontSize * 0.62);
-  CTX.font = `bold ${small}px Courier`;
-  CTX.textAlign = 'center';
-  CTX.lineWidth = 3;
-  CTX.strokeStyle = '#000';
-  CTX.fillStyle = '#ffffff';
-
-  const extraY1 = y + fontSize * 1.7;
-  const extraY2 = extraY1 + small * 1.35;
-
-  CTX.strokeText('"Crime to Say" Karaoke Challenge', CANVAS.width / 2, extraY1);
-  CTX.fillText('"Crime to Say" Karaoke Challenge', CANVAS.width / 2, extraY1);
-  CTX.strokeText('CRIME2SAY.UK', CANVAS.width / 2, extraY2);
-  CTX.fillText('CRIME2SAY.UK', CANVAS.width / 2, extraY2);
-}
-
-// ---------- Button ----------
-RECORD_BTN.addEventListener('click', () => {
-  if (!isRecording) startCountIn();
-  else stopRecording();
-});
-
-// ---------- Init ----------
-window.addEventListener('resize', () => {
-  updateAspectRatio();
-  resizeCanvas();
-});
-
-initCamera();
-loadLyrics();
+    centres.push({
+      x: x +
