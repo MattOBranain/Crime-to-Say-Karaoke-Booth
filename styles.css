@@ -1,319 +1,173 @@
-// =====================================================
-// Crime to Say Karaoke – Final polish version
-// =====================================================
-
-const PREVIEW = document.getElementById('preview');
-const CANVAS = document.getElementById('overlay-canvas');
-const CTX = CANVAS.getContext('2d');
-const RECORD_BTN = document.getElementById('record-btn');
-const COUNT_DISPLAY = document.getElementById('count-in-display');
-const WRAPPER = document.getElementById('preview-wrapper');
-const MODAL = document.getElementById('save-modal');
-const MODAL_STATUS = document.getElementById('modal-status');
-const SAVE_BTN = document.getElementById('save-btn');
-
-let stream = null;
-let audioCtx = null;
-let mediaRecorder = null;
-let recordedChunks = [];
-let isRecording = false;
-let lyrics = [];
-let audioElement = null;
-let destinationNode = null;
-let micSource = null;
-let musicSource = null;
-let musicGain = null;
-let finalBlob = null;
-let finalMime = '';
-
-const BPM = 80;
-const BEAT_DURATION = 60 / BPM;
-const B3_FREQ = 246.94;
-
-// ---------- Camera ----------
-async function initCamera() {
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
-    PREVIEW.srcObject = stream;
-    PREVIEW.onloadedmetadata = () => {
-      updateAspectRatio();
-      resizeCanvas();
-      startDrawLoop();
-    };
-  } catch (err) {
-    alert('Camera and microphone permission are required.');
-    console.error(err);
-  }
+:root {
+  --parakeet: #00FF7F;
+  --bg: #000000;
+  --white: #ffffff;
 }
 
-function updateAspectRatio() {
-  if (!PREVIEW.videoWidth) return;
-  WRAPPER.style.aspectRatio = PREVIEW.videoWidth / PREVIEW.videoHeight;
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--white);
+  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 12px;
 }
 
-// ---------- Much more robust LRC parser ----------
-async function loadLyrics() {
-  try {
-    const res = await fetch('crime-2-say-oke-shortest.lrc');
-    const text = await res.text();
-    lyrics = parseEnhancedLRC(text);
-    console.log('Parsed lyrics:', lyrics); // helpful for debugging
-  } catch (e) {
-    console.error('LRC load failed', e);
-  }
+.container {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-function parseEnhancedLRC(text) {
-  const result = [];
-  const lines = text.split(/\r?\n/);
-
-  for (let raw of lines) {
-    raw = raw.trim();
-    if (!raw.startsWith('[')) continue;
-
-    const match = raw.match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/);
-    if (!match) continue;
-
-    const start = parseInt(match[1]) * 60 + parseFloat(match[2]);
-    let content = match[3].trim();
-
-    const words = [];
-
-    // Primary: enhanced tags <mm:ss.xx>word
-    const wordRe = /<(\d+):(\d+(?:\.\d+)?)>([^<]*)/g;
-    let wm;
-    let foundEnhanced = false;
-
-    while ((wm = wordRe.exec(content)) !== null) {
-      foundEnhanced = true;
-      const wStart = parseInt(wm[1]) * 60 + parseFloat(wm[2]);
-      let word = wm[3].trim();
-      // Remove any trailing punctuation that sometimes sticks
-      if (word) words.push({ text: word, start: wStart });
-    }
-
-    // Fallback – treat whole line as one word or split on spaces
-    if (!foundEnhanced && content) {
-      // Keep the original first characters
-      words.push({ text: content, start });
-    }
-
-    if (words.length > 0) {
-      result.push({ start, words });
-    }
-  }
-  return result;
+h1 {
+  color: var(--parakeet);
+  font-weight: 700;
+  font-size: clamp(1.35rem, 5.8vw, 2rem);
+  text-align: center;
+  line-height: 1.15;
 }
 
-// ---------- Count-in ----------
-function playTone(when) {
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.frequency.value = B3_FREQ;
-  osc.type = 'sine';
-  gain.gain.setValueAtTime(0.0001, when);
-  gain.gain.exponentialRampToValueAtTime(0.35, when + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.14);
-  osc.start(when);
-  osc.stop(when + 0.16);
+.instructions {
+  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1.4;
 }
 
-function startCountIn() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const now = audioCtx.currentTime;
-  const labels = ['3', '2', '1', 'GO'];
-
-  labels.forEach((label, i) => {
-    playTone(now + i * BEAT_DURATION);
-    setTimeout(() => {
-      COUNT_DISPLAY.textContent = label;
-      COUNT_DISPLAY.classList.remove('hidden');
-    }, i * BEAT_DURATION * 1000);
-  });
-
-  setTimeout(() => {
-    COUNT_DISPLAY.classList.add('hidden');
-    beginRecording();
-  }, 3 * BEAT_DURATION * 1000);
+.preview-wrapper {
+  position: relative;
+  width: 100%;
+  background: #111;
+  border-radius: 14px;
+  overflow: hidden;
+  aspect-ratio: 3/4;
 }
 
-// ---------- Recording ----------
-async function beginRecording() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  destinationNode = audioCtx.createMediaStreamDestination();
-
-  // Mic – full level, clean
-  micSource = audioCtx.createMediaStreamSource(stream);
-  micSource.connect(destinationNode);
-
-  // Music – reduced
-  audioElement = new Audio('crime-2-say-oke-shortest.mp3');
-  audioElement.crossOrigin = 'anonymous';
-  await audioElement.play();
-
-  musicSource = audioCtx.createMediaElementSource(audioElement);
-  musicGain = audioCtx.createGain();
-  musicGain.gain.value = 0.52;
-  musicSource.connect(musicGain);
-  musicGain.connect(destinationNode);
-  musicGain.connect(audioCtx.destination);
-
-  const canvasStream = CANVAS.captureStream(30);
-  const finalStream = new MediaStream([
-    ...canvasStream.getVideoTracks(),
-    ...destinationNode.stream.getAudioTracks()
-  ]);
-
-  recordedChunks = [];
-
-  const candidates = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4',
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm'
-  ];
-  let chosen = candidates.find(t => MediaRecorder.isTypeSupported(t)) || '';
-
-  mediaRecorder = new MediaRecorder(finalStream, {
-    mimeType: chosen,
-    videoBitsPerSecond: 5500000,
-    audioBitsPerSecond: 256000
-  });
-
-  mediaRecorder.ondataavailable = e => {
-    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-  };
-
-  mediaRecorder.onstop = () => {
-    finalMime = mediaRecorder.mimeType || 'video/webm';
-    finalBlob = new Blob(recordedChunks, { type: finalMime });
-    showSaveModal();
-    cleanupAfterStop();
-  };
-
-  mediaRecorder.start(100);
-  isRecording = true;
-  RECORD_BTN.classList.add('recording');
-  RECORD_BTN.querySelector('.btn-text').textContent = 'STOP';
+#preview, #overlay-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
 }
 
-function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
+#overlay-canvas {
+  pointer-events: none;
+  z-index: 2;
 }
 
-function cleanupAfterStop() {
-  isRecording = false;
-  RECORD_BTN.classList.remove('recording');
-  RECORD_BTN.querySelector('.btn-text').textContent = 'REC';
+.count-in {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(4rem, 22vw, 9rem);
+  font-weight: 900;
+  color: var(--parakeet);
+  text-shadow: 0 0 18px #000, 0 0 40px #000;
+  z-index: 10;
+  pointer-events: none;
+}
+.count-in.hidden { display: none; }
 
-  if (audioElement) {
-    audioElement.pause();
-    audioElement = null;
-  }
-  try { micSource?.disconnect(); } catch(e){}
-  try { musicSource?.disconnect(); } catch(e){}
-  try { musicGain?.disconnect(); } catch(e){}
-
-  if (stream) {
-    stream.getAudioTracks().forEach(t => t.enabled = false);
-  }
+.controls {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 6px;
 }
 
-// ---------- Save modal + best possible “Save to Photos” ----------
-function showSaveModal() {
-  MODAL_STATUS.textContent = 'CONVERTING…';
-  SAVE_BTN.classList.add('hidden');
-  MODAL.classList.remove('hidden');
-
-  setTimeout(() => {
-    MODAL_STATUS.textContent = 'Ready to save';
-    SAVE_BTN.classList.remove('hidden');
-  }, 700);
+.record-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
-SAVE_BTN.addEventListener('click', async () => {
-  if (!finalBlob) return;
-
-  const ext = finalMime.includes('mp4') ? 'mp4' : 'webm';
-  const filename = `Crime2Say-${Date.now()}.${ext}`;
-  const file = new File([finalBlob], filename, { type: finalMime });
-
-  // Best path: Web Share API (gives “Save Video” on many phones)
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({
-        files: [file],
-        title: 'Crime to Say Karaoke'
-      });
-      MODAL.classList.add('hidden');
-      if (stream) stream.getAudioTracks().forEach(t => t.enabled = true);
-      return;
-    } catch (err) {
-      // User cancelled or share failed → fall through to download
-      console.log('Share cancelled or failed', err);
-    }
-  }
-
-  // Fallback: classic download
-  const url = URL.createObjectURL(finalBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    MODAL.classList.add('hidden');
-  }, 300);
-
-  if (stream) stream.getAudioTracks().forEach(t => t.enabled = true);
-});
-
-// ---------- Drawing + improved bouncing ball ----------
-function resizeCanvas() {
-  if (!PREVIEW.videoWidth) return;
-  CANVAS.width = PREVIEW.videoWidth;
-  CANVAS.height = PREVIEW.videoHeight;
+.btn-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  background: #e11;
+  border: 5px solid #fff;
+  box-shadow: 0 4px 22px rgba(0,0,0,0.55);
 }
 
-function startDrawLoop() {
-  function loop() {
-    requestAnimationFrame(loop);
-    if (!PREVIEW.videoWidth) return;
-    CTX.drawImage(PREVIEW, 0, 0, CANVAS.width, CANVAS.height);
-    if (audioElement && !audioElement.paused) {
-      drawLyricsAndBall(audioElement.currentTime);
-    }
-  }
-  loop();
+.btn-text {
+  color: #000;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 1px;
+  font-family: Arial, sans-serif;
 }
 
-function drawLyricsAndBall(time) {
-  let current = null;
-  for (let i = 0; i < lyrics.length; i++) {
-    if (time >= lyrics[i].start) current = lyrics[i];
-    else break;
-  }
-  if (!current || !current.words.length) return;
+.record-btn.recording .btn-circle {
+  background: #c00;
+}
 
-  const isPortrait = CANVAS.height >= CANVAS.width;
-  const fontSize = Math.max(22, Math.floor(isPortrait ? CANVAS.width / 15.5 : CANVAS.height / 17));
-  const paddingX = isPortrait ? CANVAS.width * 0.085 : CANVAS.width * 0.
+.helper {
+  text-align: center;
+  font-size: 0.95rem;
+  opacity: 0.9;
+}
+
+.disclaimer {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  opacity: 0.75;
+  margin-top: 6px;
+}
+.disclaimer p + p { margin-top: 10px; }
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal.hidden { display: none; }
+
+.modal-content {
+  background: #111;
+  border: 2px solid var(--parakeet);
+  border-radius: 16px;
+  padding: 28px 24px;
+  text-align: center;
+  width: 90%;
+  max-width: 320px;
+}
+
+#modal-status {
+  font-size: 1.3rem;
+  margin-bottom: 20px;
+  color: var(--parakeet);
+}
+
+.save-btn {
+  background: var(--parakeet);
+  color: #000;
+  font-weight: 700;
+  font-size: 1.15rem;
+  border: none;
+  border-radius: 50px;
+  padding: 14px 32px;
+  cursor: pointer;
+  width: 100%;
+}
+.save-btn.hidden { display: none; }
+
+@media (orientation: landscape) {
+  .container { max-width: 900px; }
+  .preview-wrapper { max-height: 62vh; }
+}
