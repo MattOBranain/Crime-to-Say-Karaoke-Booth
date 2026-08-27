@@ -49,8 +49,10 @@ h1 {
 
 #preview, #overlay-canvas {
   position: absolute;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
 
@@ -126,7 +128,6 @@ h1 {
 }
 .disclaimer p + p { margin-top: 10px; }
 
-/* Modal */
 .modal {
   position: fixed;
   inset: 0;
