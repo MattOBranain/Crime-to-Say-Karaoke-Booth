@@ -20,10 +20,15 @@
       <video id="preview" autoplay playsinline muted></video>
       <canvas id="overlay-canvas"></canvas>
       <div id="count-in-display" class="count-in hidden"></div>
+
+      <!-- This button forces the permission prompt on iPad -->
+      <button id="enable-btn" class="enable-btn">
+        Tap to enable<br>Camera & Mic
+      </button>
     </div>
 
     <div class="controls">
-      <button id="record-btn" class="record-btn" aria-label="Record">
+      <button id="record-btn" class="record-btn" disabled>
         <span class="btn-circle">
           <span class="btn-text">REC</span>
         </span>
