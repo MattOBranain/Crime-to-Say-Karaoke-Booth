@@ -1,55 +1,81 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>THE CRIME TO SAY KARAOKE CHALLENGE!</title>
-  <link rel="icon" href="favicon.ico" />
-  <link rel="stylesheet" href="styles.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>THE CRIME TO SAY KARAOKE CHALLENGE!</title>
+<meta name="description" content="Sing along, record, and share the Crime to Say Karaoke Challenge." />
+<link rel="icon" href="favicon.ico" />
+<link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>THE CRIME TO SAY KARAOKE CHALLENGE!</h1>
+<div class="scanlines" aria-hidden="true"></div>
 
-    <p class="instructions">
-      1. Sing, record & post!<br>
-      2. Tag or DM @MattOBranain
-    </p>
+<main class="stage">
 
-    <div class="preview-wrapper" id="preview-wrapper">
-      <video id="preview" autoplay playsinline muted></video>
-      <canvas id="overlay-canvas"></canvas>
-      <div id="count-in-display" class="count-in hidden"></div>
+  <header class="stage__header">
+    <h1>THE CRIME TO SAY<br>KARAOKE CHALLENGE!</h1>
+    <p class="tagline">Sing, record, post!<br>Tag or DM <span class="handle">@MattOBranain</span></p>
+  </header>
 
-      <!-- This button forces the permission prompt on iPad -->
-      <button id="enable-btn" class="enable-btn">
-        Tap to enable<br>Camera & Mic
-      </button>
+  <section class="booth" aria-label="Camera preview with karaoke overlay">
+    <div class="booth__frame" id="frame">
+      <video id="preview" playsinline autoplay muted></video>
+      <canvas id="stageCanvas"></canvas>
+
+      <div class="permission-gate" id="permissionGate">
+        <p id="permissionText">Requesting camera &amp; microphone access&hellip;</p>
+        <button id="permissionRetry" class="ghost-btn hidden" type="button">Enable Camera &amp; Mic</button>
+      </div>
+
+      <div class="countdown hidden" id="countdown" aria-live="assertive"></div>
+
+      <span class="frame-corner tl" aria-hidden="true"></span>
+      <span class="frame-corner tr" aria-hidden="true"></span>
+      <span class="frame-corner bl" aria-hidden="true"></span>
+      <span class="frame-corner br" aria-hidden="true"></span>
     </div>
+  </section>
 
-    <div class="controls">
-      <button id="record-btn" class="record-btn" disabled>
-        <span class="btn-circle">
-          <span class="btn-text">REC</span>
-        </span>
-      </button>
-    </div>
+  <section class="controls">
+    <button id="recordBtn" class="rec-btn" type="button" disabled aria-pressed="false">
+      <span class="rec-btn__ring">
+        <span class="rec-btn__label">START</span>
+      </span>
+    </button>
 
-    <p class="helper">When you press start a timer will count you in.</p>
+    <p class="helper" id="helperText">When you press START a timer will count you in.</p>
 
-    <div class="disclaimer">
-      <p>Defend Our Juries say: 'Replicating this video comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video is doing. It is also not illegal to campaign for the de-proscription of a group. If you do experience any legal issues resulting from joining this truth-telling trend, please email info at defendourjuries dot org.’</p>
-      <p>For other enquiries or collaboration ideas contact info at crime2say.uk</p>
+    <label class="gag-toggle" id="gagLabel">
+      <input type="checkbox" id="gagToggle" checked />
+      <span>UK Flag Mouth Gag Effect</span>
+    </label>
+  </section>
+
+  <section class="disclaimer">
+    <p><strong>Defend Our Juries</strong> say: &lsquo;Replicating this video comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video is doing. It is also not illegal to campaign for the de-proscription of a group. If you do experience any legal issues resulting from joining this truth-telling trend, please email info at defendourjuries dot org.&rsquo;</p>
+    <p>For other enquiries or collaboration ideas contact info at <a href="http://crime2say.uk" target="_blank" rel="noopener">crime2say.uk</a></p>
+  </section>
+
+  <footer class="site-footer">
+    <p>CRIME2SAY.UK</p>
+  </footer>
+
+</main>
+
+<div class="modal hidden" id="resultModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal__panel">
+    <p id="modalTitle" class="modal__title">Processing&hellip;</p>
+    <div class="modal__spinner" id="modalSpinner" aria-hidden="true"></div>
+    <video id="resultVideo" class="modal__video hidden" playsinline controls></video>
+    <p class="modal__hint hidden" id="modalHint">Tip: on iPhone you can also long-press the video above and choose &ldquo;Save Video&rdquo;.</p>
+    <div class="modal__actions">
+      <button id="saveBtn" class="primary-btn hidden" type="button">Save Video</button>
+      <button id="retryBtn" class="ghost-btn hidden" type="button">Record Again</button>
     </div>
   </div>
+</div>
 
-  <div id="save-modal" class="modal hidden">
-    <div class="modal-content">
-      <p id="modal-status">CONVERTING…</p>
-      <button id="save-btn" class="save-btn hidden">Save to Photos / Videos</button>
-    </div>
-  </div>
-
-  <script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
