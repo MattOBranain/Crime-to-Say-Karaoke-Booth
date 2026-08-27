@@ -466,10 +466,10 @@ function drawCenteredCard(line1, line2) {
   size = Math.max(size, Math.round(CANVAS.width * 0.045));
 
   const gap = size * 1.35;
-  // Anchor the block so its top edge sits right on the bottom-third line,
-  // rather than centering deeper in it.
+  // Anchor the block so the bottom edge of the lower line sits right on
+  // the bottom-third line, i.e. the whole card sits above that line.
   const bottomThirdY = CANVAS.height * (2 / 3);
-  const centerY = bottomThirdY + gap / 2 + size * 0.5;
+  const centerY = bottomThirdY - gap / 2 - size * 0.5;
   const y1 = centerY - gap / 2;
   const y2 = centerY + gap / 2;
 
