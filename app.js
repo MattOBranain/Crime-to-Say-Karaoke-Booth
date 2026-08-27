@@ -1,5 +1,5 @@
 // =====================================================
-// Crime to Say Karaoke – Fixed version
+// Crime to Say Karaoke – Updated
 // =====================================================
 
 const PREVIEW = document.getElementById('preview');
@@ -8,41 +8,35 @@ const CTX = CANVAS.getContext('2d');
 const RECORD_BTN = document.getElementById('record-btn');
 const COUNT_DISPLAY = document.getElementById('count-in-display');
 const WRAPPER = document.getElementById('preview-wrapper');
+const MODAL = document.getElementById('save-modal');
+const MODAL_STATUS = document.getElementById('modal-status');
+const SAVE_BTN = document.getElementById('save-btn');
 
 let stream = null;
 let audioCtx = null;
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
-let animationId = null;
 let lyrics = [];
-let audioElement = null;          // backing track
-let destinationNode = null;       // for mixing
+let audioElement = null;
+let destinationNode = null;
 let micSource = null;
 let musicSource = null;
+let musicGain = null;
+let finalBlob = null;
+let finalIsMp4 = false;
 
 const BPM = 80;
-const BEAT_DURATION = 60 / BPM;   // seconds
+const BEAT_DURATION = 60 / BPM;
 const B3_FREQ = 246.94;
 
-// -------------------------------------------------
-// 1. Camera + Microphone
-// -------------------------------------------------
+// ---------- Camera ----------
 async function initCamera() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'user',
-        width:  { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
-
     PREVIEW.srcObject = stream;
     PREVIEW.onloadedmetadata = () => {
       updateAspectRatio();
@@ -57,128 +51,114 @@ async function initCamera() {
 
 function updateAspectRatio() {
   if (!PREVIEW.videoWidth) return;
-  const ratio = PREVIEW.videoWidth / PREVIEW.videoHeight;
-  WRAPPER.style.aspectRatio = ratio;
+  WRAPPER.style.aspectRatio = PREVIEW.videoWidth / PREVIEW.videoHeight;
 }
 
-// -------------------------------------------------
-// 2. Load & parse Enhanced LRC
-// -------------------------------------------------
+// ---------- LRC Parser (more robust) ----------
 async function loadLyrics() {
   try {
     const res = await fetch('crime-2-say-oke-shortest.lrc');
     const text = await res.text();
     lyrics = parseEnhancedLRC(text);
   } catch (e) {
-    console.error('Could not load LRC', e);
+    console.error('LRC load failed', e);
   }
 }
 
 function parseEnhancedLRC(text) {
   const result = [];
-  const lineRe = /\[(\d+):(\d+(?:\.\d+)?)\](.*)/g;
-  let m;
+  const lines = text.split(/\r?\n/);
 
-  while ((m = lineRe.exec(text)) !== null) {
-    const start = parseInt(m[1]) * 60 + parseFloat(m[2]);
-    const raw = m[3].trim();
+  for (const rawLine of lines) {
+    const match = rawLine.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
+    if (!match) continue;
+
+    const start = parseInt(match[1]) * 60 + parseFloat(match[2]);
+    let content = match[3].trim();
+
     const words = [];
-
-    const wordRe = /<(\d+):(\d+(?:\.\d+)?)>([^<]*)/g;
+    // Match <mm:ss.xx>word  (handles missing spaces better)
+    const wordRe = /<(\d+):(\d+(?:\.\d+)?)>\s*([^<]*)/g;
     let wm;
-    while ((wm = wordRe.exec(raw)) !== null) {
+    while ((wm = wordRe.exec(content)) !== null) {
       const wStart = parseInt(wm[1]) * 60 + parseFloat(wm[2]);
       const word = wm[3].trim();
       if (word) words.push({ text: word, start: wStart });
     }
 
-    if (words.length === 0 && raw) {
-      words.push({ text: raw, start });
+    // Fallback if no enhanced tags
+    if (words.length === 0 && content) {
+      words.push({ text: content, start });
     }
 
-    result.push({ start, words });
+    if (words.length) result.push({ start, words });
   }
   return result;
 }
 
-// -------------------------------------------------
-// 3. Count-in
-// -------------------------------------------------
+// ---------- Count-in ----------
 function playTone(when) {
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.connect(gain);
   gain.connect(audioCtx.destination);
-
   osc.frequency.value = B3_FREQ;
   osc.type = 'sine';
-
   gain.gain.setValueAtTime(0.0001, when);
-  gain.gain.exponentialRampToValueAtTime(0.45, when + 0.012);
-  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
-
+  gain.gain.exponentialRampToValueAtTime(0.4, when + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.15);
   osc.start(when);
-  osc.stop(when + 0.18);
+  osc.stop(when + 0.17);
 }
 
 function startCountIn() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
   const now = audioCtx.currentTime;
   const labels = ['3', '2', '1', 'GO'];
 
   labels.forEach((label, i) => {
-    const t = now + i * BEAT_DURATION;
-    playTone(t);
-
+    playTone(now + i * BEAT_DURATION);
     setTimeout(() => {
       COUNT_DISPLAY.textContent = label;
       COUNT_DISPLAY.classList.remove('hidden');
     }, i * BEAT_DURATION * 1000);
   });
 
-  // Start recording + music on the 4th beat (GO)
   setTimeout(() => {
     COUNT_DISPLAY.classList.add('hidden');
     beginRecording();
   }, 3 * BEAT_DURATION * 1000);
 }
 
-// -------------------------------------------------
-// 4. Start recording with proper audio mix
-// -------------------------------------------------
+// ---------- Recording with balanced mix ----------
 async function beginRecording() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  // Create destination for mixed audio
   destinationNode = audioCtx.createMediaStreamDestination();
 
-  // Mic
+  // Mic (full level)
   micSource = audioCtx.createMediaStreamSource(stream);
   micSource.connect(destinationNode);
 
-  // Backing track
+  // Music – lowered ~3 dB
   audioElement = new Audio('crime-2-say-oke-shortest.mp3');
   audioElement.crossOrigin = 'anonymous';
   await audioElement.play();
 
   musicSource = audioCtx.createMediaElementSource(audioElement);
-  musicSource.connect(destinationNode);
-  // Also play locally so user hears it
-  musicSource.connect(audioCtx.destination);
+  musicGain = audioCtx.createGain();
+  musicGain.gain.value = 0.55; // ~ -5 dB → more even with voice
+  musicSource.connect(musicGain);
+  musicGain.connect(destinationNode);
+  musicGain.connect(audioCtx.destination); // hear it live
 
-  // Canvas stream
   const canvasStream = CANVAS.captureStream(30);
-
-  // Final stream = video from canvas + mixed audio
   const finalStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
     ...destinationNode.stream.getAudioTracks()
   ]);
 
   recordedChunks = [];
-
-  // Prefer mp4 if the browser supports it
   let options = { mimeType: 'video/mp4;codecs=avc1,mp4a.40.2' };
   if (!MediaRecorder.isTypeSupported(options.mimeType)) {
     options = { mimeType: 'video/webm;codecs=vp9,opus' };
@@ -189,31 +169,27 @@ async function beginRecording() {
 
   mediaRecorder = new MediaRecorder(finalStream, {
     ...options,
-    videoBitsPerSecond: 4500000,
+    videoBitsPerSecond: 5000000,
     audioBitsPerSecond: 192000
   });
 
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+  mediaRecorder.ondataavailable = e => {
+    if (e.data?.size > 0) recordedChunks.push(e.data);
   };
 
   mediaRecorder.onstop = () => {
-    const isMp4 = mediaRecorder.mimeType.includes('mp4');
-    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
-    downloadRecording(blob, isMp4);
+    finalIsMp4 = mediaRecorder.mimeType.includes('mp4');
+    finalBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+    showSaveModal();
     cleanupAfterStop();
   };
 
   mediaRecorder.start(200);
   isRecording = true;
-
   RECORD_BTN.classList.add('recording');
   RECORD_BTN.querySelector('.btn-text').textContent = 'STOP';
 }
 
-// -------------------------------------------------
-// 5. Stop
-// -------------------------------------------------
 function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
@@ -231,44 +207,50 @@ function cleanupAfterStop() {
   }
   if (micSource) micSource.disconnect();
   if (musicSource) musicSource.disconnect();
+  if (musicGain) musicGain.disconnect();
 
-  // Mute mic monitoring
   if (stream) {
-    stream.getAudioTracks().forEach(track => track.enabled = false);
+    stream.getAudioTracks().forEach(t => t.enabled = false);
   }
 }
 
-// -------------------------------------------------
-// 6. Download (iOS friendly)
-// -------------------------------------------------
-function downloadRecording(blob, isMp4) {
-  const ext = isMp4 ? 'mp4' : 'webm';
+// ---------- Save modal ----------
+function showSaveModal() {
+  MODAL_STATUS.textContent = 'CONVERTING…';
+  SAVE_BTN.classList.add('hidden');
+  MODAL.classList.remove('hidden');
+
+  // Short delay to simulate / allow processing
+  setTimeout(() => {
+    MODAL_STATUS.textContent = 'Ready!';
+    SAVE_BTN.classList.remove('hidden');
+  }, 600);
+}
+
+SAVE_BTN.addEventListener('click', () => {
+  if (!finalBlob) return;
+  const ext = finalIsMp4 ? 'mp4' : 'webm';
   const filename = `Crime2Say-${Date.now()}.${ext}`;
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(finalBlob);
 
   const a = document.createElement('a');
-  a.style.display = 'none';
   a.href = url;
   a.download = filename;
-
-  // iOS / iPadOS sometimes needs this pattern
   document.body.appendChild(a);
   a.click();
-
   setTimeout(() => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, 150);
+    MODAL.classList.add('hidden');
+  }, 200);
 
-  // Re-enable mic for next take
+  // Re-enable mic
   if (stream) {
-    stream.getAudioTracks().forEach(track => track.enabled = true);
+    stream.getAudioTracks().forEach(t => t.enabled = true);
   }
-}
+});
 
-// -------------------------------------------------
-// 7. Drawing (lyrics + ball) with better padding
-// -------------------------------------------------
+// ---------- Drawing ----------
 function resizeCanvas() {
   if (!PREVIEW.videoWidth) return;
   CANVAS.width = PREVIEW.videoWidth;
@@ -277,11 +259,9 @@ function resizeCanvas() {
 
 function startDrawLoop() {
   function loop() {
-    animationId = requestAnimationFrame(loop);
+    requestAnimationFrame(loop);
     if (!PREVIEW.videoWidth) return;
-
     CTX.drawImage(PREVIEW, 0, 0, CANVAS.width, CANVAS.height);
-
     if (audioElement && !audioElement.paused) {
       drawLyricsAndBall(audioElement.currentTime);
     }
@@ -298,90 +278,94 @@ function drawLyricsAndBall(time) {
   if (!current || !current.words.length) return;
 
   const isPortrait = CANVAS.height >= CANVAS.width;
-  const baseSize = isPortrait ? CANVAS.width / 15.5 : CANVAS.height / 17;
-  const fontSize = Math.max(22, Math.floor(baseSize));
-  const paddingX = isPortrait ? CANVAS.width * 0.08 : CANVAS.width * 0.06; // healthy margin
+  const fontSize = Math.max(20, Math.floor(isPortrait ? CANVAS.width / 16 : CANVAS.height / 18));
+  const paddingX = isPortrait ? CANVAS.width * 0.09 : CANVAS.width * 0.07;
+  const maxWidth = CANVAS.width - paddingX * 2;
 
   CTX.font = `bold ${fontSize}px Arial`;
   CTX.textAlign = 'left';
   CTX.textBaseline = 'middle';
-  CTX.lineWidth = Math.max(2.5, fontSize / 11);
+  CTX.lineWidth = Math.max(2.2, fontSize / 12);
   CTX.strokeStyle = '#000';
 
-  const y = CANVAS.height * 0.79;
+  // Build lines with wrapping
+  const linesToDraw = [];
+  let currentLineWords = [];
+  let currentLineWidth = 0;
 
-  // Calculate total width of line
-  const texts = current.words.map(w => w.text);
-  const full = texts.join(' ');
-  const totalWidth = CTX.measureText(full).width;
-
-  // Centered start X with padding protection
-  let x = (CANVAS.width - totalWidth) / 2;
-  x = Math.max(paddingX, Math.min(x, CANVAS.width - totalWidth - paddingX));
-
-  // Draw words
-  let activeIdx = -1;
-  current.words.forEach((word, idx) => {
-    const next = current.words[idx + 1];
-    if (time >= word.start && (!next || time < next.start)) {
-      activeIdx = idx;
+  current.words.forEach(word => {
+    const w = CTX.measureText(word.text + ' ').width;
+    if (currentLineWidth + w > maxWidth && currentLineWords.length > 0) {
+      linesToDraw.push([...currentLineWords]);
+      currentLineWords = [];
+      currentLineWidth = 0;
     }
+    currentLineWords.push(word);
+    currentLineWidth += w;
+  });
+  if (currentLineWords.length) linesToDraw.push(currentLineWords);
 
-    const w = CTX.measureText(word.text).width;
-    CTX.fillStyle = (idx === activeIdx) ? '#00FF7F' : '#ffffff';
+  const baseY = CANVAS.height * 0.76;
+  const lineHeight = fontSize * 1.35;
 
-    CTX.strokeText(word.text, x, y);
-    CTX.fillText(word.text, x, y);
+  linesToDraw.forEach((lineWords, lineIdx) => {
+    const y = baseY + lineIdx * lineHeight;
+    let totalW = 0;
+    lineWords.forEach(w => totalW += CTX.measureText(w.text + ' ').width);
+    let x = (CANVAS.width - totalW) / 2;
+    x = Math.max(paddingX, Math.min(x, CANVAS.width - totalW - paddingX));
 
-    x += w + CTX.measureText(' ').width;
+    lineWords.forEach((word, idx) => {
+      const next = lineWords[idx + 1];
+      const isActive = time >= word.start && (!next || time < next.start);
+
+      CTX.fillStyle = isActive ? '#00FF7F' : '#ffffff';
+      CTX.strokeText(word.text, x, y);
+      CTX.fillText(word.text, x, y);
+
+      // Ball only on active
+      if (isActive) {
+        const progress = Math.min(1, (time - word.start) / 0.35);
+        const bounce = Math.sin(progress * Math.PI) * (fontSize * 1.5);
+        const ballX = x + CTX.measureText(word.text).width / 2;
+
+        CTX.beginPath();
+        CTX.arc(ballX, y - fontSize * 0.7 - bounce, fontSize * 0.26, 0, Math.PI * 2);
+        CTX.fillStyle = '#00FF7F';
+        CTX.fill();
+        CTX.lineWidth = 2;
+        CTX.strokeStyle = '#000';
+        CTX.stroke();
+      }
+
+      x += CTX.measureText(word.text + ' ').width;
+    });
   });
 
-  // Bouncing ball
-  if (activeIdx >= 0) {
-    const word = current.words[activeIdx];
-    const progress = Math.min(1, (time - word.start) / 0.35);
-    const bounce = Math.sin(progress * Math.PI) * (fontSize * 1.55);
-
-    // Re-calculate x of active word
-    let ballX = (CANVAS.width - totalWidth) / 2;
-    ballX = Math.max(paddingX, Math.min(ballX, CANVAS.width - totalWidth - paddingX));
-    for (let i = 0; i < activeIdx; i++) {
-      ballX += CTX.measureText(current.words[i].text + ' ').width;
-    }
-    ballX += CTX.measureText(word.text).width / 2;
-
-    CTX.beginPath();
-    CTX.arc(ballX, y - fontSize * 0.75 - bounce, fontSize * 0.27, 0, Math.PI * 2);
-    CTX.fillStyle = '#00FF7F';
-    CTX.fill();
-    CTX.lineWidth = 2;
-    CTX.strokeStyle = '#000';
-    CTX.stroke();
-  }
-
-  // Extra overlays
+  // Extra text – same width / grid as lyrics + red outline
   const small = Math.floor(fontSize * 0.52);
   CTX.font = `${small}px Courier`;
-  CTX.fillStyle = '#ffffff';
   CTX.textAlign = 'center';
-  CTX.fillText('"Crime to Say" Karaoke Challenge', CANVAS.width / 2, y + fontSize * 1.55);
-  CTX.fillText('CRIME2SAY.UK', CANVAS.width / 2, y + fontSize * 2.25);
+  CTX.lineWidth = 2.5;
+  CTX.strokeStyle = '#cc0000';          // small red outline
+  CTX.fillStyle = '#ffffff';
+
+  const extraY1 = baseY + linesToDraw.length * lineHeight + fontSize * 0.9;
+  const extraY2 = extraY1 + small * 1.4;
+
+  CTX.strokeText('"Crime to Say" Karaoke Challenge', CANVAS.width / 2, extraY1);
+  CTX.fillText('"Crime to Say" Karaoke Challenge', CANVAS.width / 2, extraY1);
+  CTX.strokeText('CRIME2SAY.UK', CANVAS.width / 2, extraY2);
+  CTX.fillText('CRIME2SAY.UK', CANVAS.width / 2, extraY2);
 }
 
-// -------------------------------------------------
-// 8. Button handler
-// -------------------------------------------------
+// ---------- Button ----------
 RECORD_BTN.addEventListener('click', () => {
-  if (!isRecording) {
-    startCountIn();
-  } else {
-    stopRecording();
-  }
+  if (!isRecording) startCountIn();
+  else stopRecording();
 });
 
-// -------------------------------------------------
-// Init
-// -------------------------------------------------
+// ---------- Init ----------
 window.addEventListener('resize', () => {
   updateAspectRatio();
   resizeCanvas();
