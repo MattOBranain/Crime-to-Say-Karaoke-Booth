@@ -31,11 +31,19 @@ const DUCK_THRESHOLD = 0.035;
 // with when the voice actually arrives. Tune this if a device still drifts.
 const MUSIC_REC_SYNC_DELAY_SEC = 0.13;
 
+// Separately: the camera's own capture pipeline (sensor -> ISP -> browser)
+// means the *video* frame drawn "now" actually shows a moment slightly in
+// the past, while the audio graph above has ~zero latency by comparison.
+// Mic and music are already correctly synced to each other (above); this
+// delays that whole finished mix an extra step further so it lines up with
+// what the lagging video is actually showing, rather than the true moment
+// it was captured. Applied only to the recorded mix, never live monitoring.
+const VIDEO_CAPTURE_LATENCY_SEC = 0.18;
+
 const MAX_CANVAS_DIM = 1280;
-const TITLE_REVEAL_DELAY_SEC = 0.5;
 const TITLE_LINE_1 = 'CRIME TO SAY';
 const TITLE_LINE_2 = 'KARAOKE CHALLENGE';
-const END_LINE_1 = 'JOIN THE CHALLENGE AT:';
+const END_LINE_1 = 'JOIN THE CRIME2SAY KARAOKE CHALLENGE:';
 const END_LINE_2 = 'CRIME2SAY.UK';
 
 const GREEN_BRIGHT = '#00ff7f';
@@ -468,7 +476,7 @@ function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
 
 // Centered two-line title/end card, used for the moment before the music
 // kicks in and the moment after the last lyric — not shown during singing.
-function drawCenteredCard(line1, line2) {
+function drawCenteredCard(line1, line2, color = GREEN_BRIGHT) {
   const isPortrait = CANVAS.height >= CANVAS.width;
   const marginRatio = isPortrait ? 0.88 : 0.8;
   const fontSpec = (px) => `bold ${px}px Arial`;
@@ -491,7 +499,7 @@ function drawCenteredCard(line1, line2) {
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
-  CTX.fillStyle = GREEN_BRIGHT;
+  CTX.fillStyle = color;
 
   CTX.strokeText(line1, CANVAS.width / 2, y1);
   CTX.fillText(line1, CANVAS.width / 2, y1);
@@ -556,14 +564,10 @@ function renderLoop() {
     const t = audioCtx.currentTime - musicStartAudioTime;
     const lastLineEnd = lyricLines.length ? lyricLines[lyricLines.length - 1].end : Infinity;
     if (t < 0) {
-      // Flick on partway through the count-in rather than being there from
-      // the very first frame.
-      const elapsedSinceStart = t + 4 * BEAT_SEC;
-      if (elapsedSinceStart >= TITLE_REVEAL_DELAY_SEC) {
-        drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2);
-      }
+      // Visible from the very first frame of the recording.
+      drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2);
     } else if (t >= lastLineEnd) {
-      drawCenteredCard(END_LINE_1, END_LINE_2);
+      drawCenteredCard(END_LINE_1, END_LINE_2, WHITE);
     } else {
       drawLyricsAndBall(t);
     }
@@ -662,10 +666,18 @@ function beginRecording(ctx) {
   recCompressor.ratio.value = 3;
   recCompressor.attack.value = 0.01;
   recCompressor.release.value = 0.2;
-  recCompressor.connect(recDestination);
 
-  // Mic is the timing reference: it already arrives with whatever capture
-  // latency the device has, so it goes straight into the mix undelayed.
+  // Shifts the whole finished mix later to match the camera's own capture
+  // latency (see VIDEO_CAPTURE_LATENCY_SEC above) — applied after mic and
+  // music are already correctly synced to each other, so their relative
+  // timing is untouched, only their timing relative to video changes.
+  const videoSyncDelay = ctx.createDelay(1.0);
+  videoSyncDelay.delayTime.value = VIDEO_CAPTURE_LATENCY_SEC;
+  recCompressor.connect(videoSyncDelay);
+  videoSyncDelay.connect(recDestination);
+
+  // Mic and music are synced to each other here; it's the block above that
+  // additionally shifts the combined result to match the video.
   // A weak/quiet mic (seen on some older devices) needs more than just a
   // gain multiplier to become audible: compressing first tames any loud
   // peaks, then a makeup-gain stage lifts the now-controlled signal further
