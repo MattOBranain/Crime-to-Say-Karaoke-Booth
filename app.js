@@ -37,7 +37,7 @@ const END_LINE_1 = 'JOIN THE CHALLENGE AT:';
 const END_LINE_2 = 'CRIME2SAY.UK';
 
 const GREEN_BRIGHT = '#00ff7f';
-const GREEN_DIM = '#0f8a4c';
+const WHITE = '#ffffff';
 
 // ---------------------------------------------------------------------
 // DOM
@@ -118,8 +118,16 @@ async function initCamera() {
   PERMISSION_TEXT.textContent = 'Requesting camera & microphone access…';
 
   try {
+    // Hint the real orientation to the camera instead of asking for an
+    // equal width/height (which on at least one device came back as a
+    // literal square recording, not portrait).
+    const wantPortrait = window.innerHeight >= window.innerWidth;
+    const videoConstraints = wantPortrait
+      ? { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } }
+      : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
+
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 1280 } },
+      video: videoConstraints,
       // Deliberately no echoCancellation/noiseSuppression/autoGainControl:
       // that adaptive processing adds latency and, on several phones, was
       // intermittently gating/dropping the mic when it heard the loud
@@ -374,7 +382,7 @@ function drawLyricsAndBall(t) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const isActive = i === activeIndex;
-    CTX.fillStyle = isActive ? GREEN_BRIGHT : GREEN_DIM;
+    CTX.fillStyle = isActive ? GREEN_BRIGHT : WHITE;
     CTX.strokeStyle = 'rgba(0,0,0,0.85)';
     const drawX = w.x - w.width / 2;
     CTX.strokeText(w.text, drawX, baselineY);
@@ -437,17 +445,18 @@ function drawCenteredCard(line1, line2) {
   const fontSpec = (px) => `bold ${px}px Arial`;
 
   let size = fitFontSizeToWidth([line1, line2], marginRatio, fontSpec);
-  size = Math.min(size, Math.round(CANVAS.height * (isPortrait ? 0.11 : 0.14)));
+  size = Math.min(size, Math.round(CANVAS.height * (isPortrait ? 0.1 : 0.13)));
   size = Math.max(size, Math.round(CANVAS.width * 0.045));
 
   const gap = size * 1.35;
-  const centerY = CANVAS.height / 2;
+  const centerY = CANVAS.height * 0.84; // bottom third, same neighbourhood as the lyrics
   const y1 = centerY - gap / 2;
   const y2 = centerY + gap / 2;
 
   CTX.font = fontSpec(size);
   CTX.textAlign = 'center';
   CTX.textBaseline = 'middle';
+  CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
   CTX.fillStyle = GREEN_BRIGHT;
@@ -699,9 +708,10 @@ function detectNativeMp4Support() {
   nativeMp4Supported =
     MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.42E01E,mp4a.40.2') ||
     MediaRecorder.isTypeSupported('video/mp4');
-  if (!nativeMp4Supported) {
-    getFFmpeg().catch((e) => console.warn('ffmpeg preload failed', e));
-  }
+  // Warm up ffmpeg in the background regardless: some browsers claim mp4
+  // support but hand back a file that won't play, and we repair those via
+  // ffmpeg too (see blobPlaysBack), so it's worth having ready either way.
+  getFFmpeg().catch((e) => console.warn('ffmpeg preload failed', e));
 }
 
 async function stopSequence() {
@@ -743,11 +753,41 @@ async function stopSequence() {
 // ---------------------------------------------------------------------
 // Post-processing / export
 // ---------------------------------------------------------------------
+
+// Some browsers report MediaRecorder support for "video/mp4" but hand back
+// a file that doesn't actually play (missing/broken moov atom etc). Rather
+// than trust the claimed mimeType, verify the file actually loads before
+// treating it as done — and if it doesn't, repair it by remuxing through
+// ffmpeg the same way a webm recording would be converted.
+function blobPlaysBack(blob) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    const url = URL.createObjectURL(blob);
+    const finish = (ok) => { URL.revokeObjectURL(url); resolve(ok); };
+    const timer = setTimeout(() => finish(false), 4000);
+    v.onloadedmetadata = () => { clearTimeout(timer); finish(isFinite(v.duration) && v.duration > 0); };
+    v.onerror = () => { clearTimeout(timer); finish(false); };
+    v.src = url;
+  });
+}
+
 async function processAndOfferSave(rawBlob, rawMime) {
   let finalBlob = rawBlob;
   let ext = 'webm';
+  let needsTranscode = !rawMime.includes('mp4');
 
-  if (rawMime.includes('mp4')) {
+  if (!needsTranscode) {
+    MODAL_TITLE.textContent = 'Finishing up…';
+    const ok = await blobPlaysBack(rawBlob);
+    if (!ok) {
+      console.warn('Recorded mp4 failed a playback check, repairing via ffmpeg');
+      needsTranscode = true;
+    }
+  }
+
+  if (!needsTranscode) {
     ext = 'mp4';
   } else {
     MODAL_TITLE.textContent = 'Converting to MP4…';
@@ -785,7 +825,7 @@ async function getFFmpeg() {
 
 async function transcodeToMp4(blob) {
   const ffmpeg = await getFFmpeg();
-  const inputName = 'input' + (blob.type.includes('webm') ? '.webm' : '.mov');
+  const inputName = 'input' + (blob.type.includes('webm') ? '.webm' : blob.type.includes('mp4') ? '.mp4' : '.mov');
   const buf = new Uint8Array(await blob.arrayBuffer());
   await ffmpeg.writeFile(inputName, buf);
 

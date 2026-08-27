@@ -19,10 +19,6 @@ body {
   min-height: 100dvh;
   display: flex;
   justify-content: center;
-  background-image:
-    linear-gradient(rgba(0, 255, 127, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 255, 127, 0.08) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 
 .stage {
@@ -73,8 +69,6 @@ h1 {
   background: var(--panel);
   border-radius: 12px;
   overflow: hidden;
-  border: 3px solid var(--parakeet);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 8px 40px rgba(0, 255, 127, 0.08);
 }
 
 #preview {
@@ -123,9 +117,9 @@ h1 {
   border: 2px solid var(--parakeet);
   color: var(--parakeet);
   font-weight: 700;
-  font-size: 1rem;
-  padding: 12px 22px;
-  border-radius: 8px;
+  font-size: 1.05rem;
+  padding: 14px 28px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
@@ -133,12 +127,15 @@ h1 {
 
 .countdown {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 34%; /* stay clear of the title/end card lower down */
   z-index: 8;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(4.5rem, 26vw, 10rem);
+  font-size: clamp(3.5rem, 20vw, 8rem);
   font-weight: 900;
   color: var(--parakeet);
   text-shadow: 0 0 24px rgba(0, 0, 0, 0.9), 0 0 60px rgba(0, 255, 127, 0.5);
@@ -292,8 +289,8 @@ h1 {
   color: var(--black);
   font-weight: 700;
   font-size: 1.05rem;
-  border: none;
-  border-radius: 50px;
+  border: 2px solid var(--parakeet);
+  border-radius: 10px;
   padding: 14px 28px;
   cursor: pointer;
 }
