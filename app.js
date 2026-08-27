@@ -31,6 +31,7 @@ const DUCK_THRESHOLD = 0.035;
 const MUSIC_REC_SYNC_DELAY_SEC = 0.13;
 
 const MAX_CANVAS_DIM = 1280;
+const TITLE_REVEAL_DELAY_SEC = 0.5;
 const TITLE_LINE_1 = 'CRIME TO SAY';
 const TITLE_LINE_2 = 'KARAOKE CHALLENGE';
 const END_LINE_1 = 'JOIN THE CHALLENGE AT:';
@@ -126,16 +127,16 @@ async function initCamera() {
       throw new Error('INSECURE_CONTEXT');
     }
 
-    // Hint the real orientation to the camera instead of asking for an
-    // equal width/height (which on at least one device came back as a
-    // literal square recording, not portrait).
-    const wantPortrait = window.innerHeight >= window.innerWidth;
-    const videoConstraints = wantPortrait
-      ? { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } }
-      : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
-
+    // Deliberately no width/height constraints at all. Asking for a narrow
+    // portrait-shaped ideal (e.g. 720x1280) previously caused some phones
+    // to have the *camera itself* digitally crop/zoom its sensor to match
+    // that exact ratio, rather than just scaling down its natural field of
+    // view — stacked with our own cover-crop in drawMirroredCoverVideo(),
+    // that compounded into a badly over-zoomed recording. Taking whatever
+    // the camera gives us natively and doing all the aspect-fitting
+    // ourselves in one place is more robust across devices.
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: videoConstraints,
+      video: { facingMode: 'user' },
       // Deliberately no echoCancellation/noiseSuppression/autoGainControl:
       // that adaptive processing adds latency and, on several phones, was
       // intermittently gating/dropping the mic when it heard the loud
@@ -465,7 +466,10 @@ function drawCenteredCard(line1, line2) {
   size = Math.max(size, Math.round(CANVAS.width * 0.045));
 
   const gap = size * 1.35;
-  const centerY = CANVAS.height * 0.84; // bottom third, same neighbourhood as the lyrics
+  // Anchor the block so its top edge sits right on the bottom-third line,
+  // rather than centering deeper in it.
+  const bottomThirdY = CANVAS.height * (2 / 3);
+  const centerY = bottomThirdY + gap / 2 + size * 0.5;
   const y1 = centerY - gap / 2;
   const y2 = centerY + gap / 2;
 
@@ -540,7 +544,12 @@ function renderLoop() {
     const t = audioCtx.currentTime - musicStartAudioTime;
     const lastLineEnd = lyricLines.length ? lyricLines[lyricLines.length - 1].end : Infinity;
     if (t < 0) {
-      drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2);
+      // Flick on partway through the count-in rather than being there from
+      // the very first frame.
+      const elapsedSinceStart = t + 4 * BEAT_SEC;
+      if (elapsedSinceStart >= TITLE_REVEAL_DELAY_SEC) {
+        drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2);
+      }
     } else if (t >= lastLineEnd) {
       drawCenteredCard(END_LINE_1, END_LINE_2);
     } else {
