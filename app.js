@@ -1,11 +1,12 @@
 // =====================================================
-// Crime to Say Karaoke – Camera fixed + previous improvements
+// Crime to Say Karaoke – iPad permission fix
 // =====================================================
 
 const PREVIEW = document.getElementById('preview');
 const CANVAS = document.getElementById('overlay-canvas');
 const CTX = CANVAS.getContext('2d');
 const RECORD_BTN = document.getElementById('record-btn');
+const ENABLE_BTN = document.getElementById('enable-btn');
 const COUNT_DISPLAY = document.getElementById('count-in-display');
 const WRAPPER = document.getElementById('preview-wrapper');
 const MODAL = document.getElementById('save-modal');
@@ -25,13 +26,17 @@ let musicSource = null;
 let musicGain = null;
 let finalBlob = null;
 let finalMime = '';
+let cameraReady = false;
 
 const BPM = 80;
 const BEAT_DURATION = 60 / BPM;
 const B3_FREQ = 246.94;
 
-// ---------- CAMERA FIRST (most important) ----------
-async function initCamera() {
+// ---------- Enable camera on user tap (required for iPad) ----------
+ENABLE_BTN.addEventListener('click', async () => {
+  ENABLE_BTN.textContent = 'Requesting permission…';
+  ENABLE_BTN.disabled = true;
+
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -49,27 +54,23 @@ async function initCamera() {
     PREVIEW.srcObject = stream;
     PREVIEW.muted = true;
     PREVIEW.playsInline = true;
+    await PREVIEW.play();
 
-    // Wait until video is actually ready
-    await PREVIEW.play().catch(() => {});
+    cameraReady = true;
+    ENABLE_BTN.classList.add('hidden');
+    RECORD_BTN.disabled = false;
 
-    PREVIEW.onloadedmetadata = () => {
-      updateAspectRatio();
-      resizeCanvas();
-    };
-
-    // Force a resize after a short delay (helps some mobile browsers)
-    setTimeout(() => {
-      updateAspectRatio();
-      resizeCanvas();
-      startDrawLoop();
-    }, 300);
+    updateAspectRatio();
+    resizeCanvas();
+    startDrawLoop();
 
   } catch (err) {
-    console.error('Camera error:', err);
-    alert('Could not access camera/microphone. Please allow permission and reload.');
+    console.error(err);
+    ENABLE_BTN.textContent = 'Permission denied\nTap to try again';
+    ENABLE_BTN.disabled = false;
+    alert('Camera & Microphone permission is required. Please allow access and try again.');
   }
-}
+});
 
 function updateAspectRatio() {
   if (PREVIEW.videoWidth && PREVIEW.videoHeight) {
@@ -84,15 +85,14 @@ function resizeCanvas() {
   }
 }
 
-// ---------- LRC (safe) ----------
+// ---------- Lyrics ----------
 async function loadLyrics() {
   try {
     const res = await fetch('crime-2-say-oke-shortest.lrc');
     const text = await res.text();
     lyrics = parseEnhancedLRC(text);
   } catch (e) {
-    console.warn('Lyrics could not be loaded', e);
-    lyrics = [];
+    console.warn('Lyrics load failed', e);
   }
 }
 
@@ -122,7 +122,6 @@ function parseEnhancedLRC(text) {
       if (word) words.push({ text: word, start: wStart });
     }
 
-    // Fallback – never lose the first words
     if (!found || words.length === 0) {
       const plain = content.replace(/<[^>]+>/g, '').trim();
       if (plain) {
@@ -137,7 +136,7 @@ function parseEnhancedLRC(text) {
   return result;
 }
 
-// ---------- Count-in ----------
+// ---------- Count-in + Recording (same as before) ----------
 function playTone(when) {
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
@@ -153,6 +152,7 @@ function playTone(when) {
 }
 
 function startCountIn() {
+  if (!cameraReady) return;
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const now = audioCtx.currentTime;
   const labels = ['3', '2', '1', 'GO'];
@@ -171,12 +171,10 @@ function startCountIn() {
   }, 3 * BEAT_DURATION * 1000);
 }
 
-// ---------- Recording ----------
 async function beginRecording() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   destinationNode = audioCtx.createMediaStreamDestination();
-
   micSource = audioCtx.createMediaStreamSource(stream);
   micSource.connect(destinationNode);
 
@@ -226,85 +224,4 @@ async function beginRecording() {
   mediaRecorder.start(100);
   isRecording = true;
   RECORD_BTN.classList.add('recording');
-  RECORD_BTN.querySelector('.btn-text').textContent = 'STOP';
-}
-
-function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-}
-
-function cleanupAfterStop() {
-  isRecording = false;
-  RECORD_BTN.classList.remove('recording');
-  RECORD_BTN.querySelector('.btn-text').textContent = 'REC';
-  if (audioElement) {
-    audioElement.pause();
-    audioElement = null;
-  }
-  try { micSource?.disconnect(); } catch(e){}
-  try { musicSource?.disconnect(); } catch(e){}
-  try { musicGain?.disconnect(); } catch(e){}
-  if (stream) stream.getAudioTracks().forEach(t => t.enabled = false);
-}
-
-// ---------- Save ----------
-function showSaveModal() {
-  MODAL_STATUS.textContent = 'CONVERTING…';
-  SAVE_BTN.classList.add('hidden');
-  MODAL.classList.remove('hidden');
-  setTimeout(() => {
-    MODAL_STATUS.textContent = 'Ready to save';
-    SAVE_BTN.classList.remove('hidden');
-  }, 700);
-}
-
-SAVE_BTN.addEventListener('click', async () => {
-  if (!finalBlob) return;
-  const ext = finalMime.includes('mp4') ? 'mp4' : 'webm';
-  const filename = `Crime2Say-${Date.now()}.${ext}`;
-  const file = new File([finalBlob], filename, { type: finalMime });
-
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: 'Crime to Say Karaoke' });
-      MODAL.classList.add('hidden');
-      if (stream) stream.getAudioTracks().forEach(t => t.enabled = true);
-      return;
-    } catch (err) {}
-  }
-
-  const url = URL.createObjectURL(finalBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    MODAL.classList.add('hidden');
-  }, 300);
-  if (stream) stream.getAudioTracks().forEach(t => t.enabled = true);
-});
-
-// ---------- Draw loop ----------
-function startDrawLoop() {
-  function loop() {
-    requestAnimationFrame(loop);
-    if (!PREVIEW.videoWidth) return;
-
-    CTX.drawImage(PREVIEW, 0, 0, CANVAS.width, CANVAS.height);
-
-    if (audioElement && !audioElement.paused) {
-      drawLyricsAndBall(audioElement.currentTime);
-    }
-  }
-  loop();
-}
-
-function drawLyricsAndBall(time) {
-  // (same improved drawing code as previous version)
-  let current = null;
-  for (let
+  RECORD_BTN.querySelector('.btn
