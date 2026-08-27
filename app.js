@@ -15,7 +15,8 @@ const B3_FREQ = 246.94;
 // Audio mix levels. Two separate music gains are used: one for what the
 // singer hears live (kept loud so they can perform to it), and a lower one
 // that's actually recorded (so their voice cuts through in the final mix).
-const MIC_GAIN = 1.6;
+const MIC_GAIN = 3.0;
+const MIC_MAKEUP_GAIN = 2.2; // applied after compression to lift quiet mics (see beginRecording)
 const MUSIC_LIVE_GAIN = 0.85;
 const MUSIC_REC_BASE_GAIN = 0.5;
 const MUSIC_REC_DUCK_GAIN = 0.32;
@@ -654,11 +655,29 @@ function beginRecording(ctx) {
 
   // Mic is the timing reference: it already arrives with whatever capture
   // latency the device has, so it goes straight into the mix undelayed.
+  // A weak/quiet mic (seen on some older devices) needs more than just a
+  // gain multiplier to become audible: compressing first tames any loud
+  // peaks, then a makeup-gain stage lifts the now-controlled signal further
+  // — compression alone doesn't add loudness, only the makeup gain after it
+  // does. This is the whole "boost a quiet recording" trick, no heavier
+  // processing than that.
   micSourceNode = ctx.createMediaStreamSource(cameraStream);
   micGainNode = ctx.createGain();
   micGainNode.gain.value = MIC_GAIN;
   micSourceNode.connect(micGainNode);
-  micGainNode.connect(recCompressor);
+
+  const micCompressor = ctx.createDynamicsCompressor();
+  micCompressor.threshold.value = -24;
+  micCompressor.knee.value = 12;
+  micCompressor.ratio.value = 4;
+  micCompressor.attack.value = 0.01;
+  micCompressor.release.value = 0.25;
+  micGainNode.connect(micCompressor);
+
+  const micMakeupGainNode = ctx.createGain();
+  micMakeupGainNode.gain.value = MIC_MAKEUP_GAIN;
+  micCompressor.connect(micMakeupGainNode);
+  micMakeupGainNode.connect(recCompressor);
 
   const micAnalyser = ctx.createAnalyser();
   micAnalyser.fftSize = 512;
