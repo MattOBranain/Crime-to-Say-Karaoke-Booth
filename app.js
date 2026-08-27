@@ -117,6 +117,15 @@ async function initCamera() {
   PERMISSION_TEXT.textContent = 'Requesting camera & microphone access…';
 
   try {
+    // getUserMedia is only available in a secure context (https, or
+    // localhost). Outside of one, navigator.mediaDevices is undefined and
+    // calling it would throw with a confusing generic error — catch it here
+    // so the message actually points at the real problem (usually the page
+    // being loaded over plain http, e.g. via a misconfigured custom domain).
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('INSECURE_CONTEXT');
+    }
+
     // Hint the real orientation to the camera instead of asking for an
     // equal width/height (which on at least one device came back as a
     // literal square recording, not portrait).
@@ -150,7 +159,9 @@ async function initCamera() {
   } catch (err) {
     console.error('Camera/mic error', err);
     PERMISSION_TEXT.textContent =
-      'Camera & microphone access is needed for the karaoke booth to work.';
+      err && err.message === 'INSECURE_CONTEXT'
+        ? 'This page needs to be loaded over a secure https:// link for camera access to work — check the URL you opened.'
+        : 'Camera & microphone access is needed for the karaoke booth to work.';
     PERMISSION_RETRY.classList.remove('hidden');
     RECORD_BTN.disabled = true;
   }
