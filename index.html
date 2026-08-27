@@ -1,140 +1,47 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CRIME TO SAY... KARAOKE BOOTH</title>
-    <style>
-        body { 
-            margin: 0; 
-            background: #000; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh; 
-            color: white; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            padding: 20px;
-        }
-        h1 { 
-            font-size: 1.2rem; 
-            margin-bottom: 10px; 
-            text-align: center; 
-            color: #fff; 
-            padding: 0 10px;
-        }
-        .instructions {
-            text-align: center;
-            margin-bottom: 20px;
-            font-size: 15px;        /* slightly larger */
-            color: #ccc;
-            max-width: 500px;
-            line-height: 1.45;     /* tightened spacing */
-        }
-        .instructions p {
-            margin: 6px 0;         /* reduce spacing slightly */
-        }
-        #preview-container { 
-            position: relative; 
-            width: 100%; 
-            max-width: 450px; 
-            aspect-ratio: 9/16; 
-            background: #111; 
-            overflow: hidden; 
-            border: 2px solid #333; 
-        }
-        /* Ensure the video and canvas use 'contain' so we don't unexpectedly crop to 4:5 */
-        #preview, #processing-canvas {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            transform: scaleX(-1); /* Mirror effect */
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
-        /* Make processing canvas visible and pointer-events none so it doesn't block controls */
-        #processing-canvas {
-            display: block;
-            pointer-events: none;
-            z-index: 2;
-        }
-        #controls { 
-            margin-top: 20px; 
-            z-index: 10; 
-            text-align: center; 
-        }
-        button { 
-            padding: 15px 30px; 
-            font-size: 18px; 
-            cursor: pointer; 
-            background: #e1306c; 
-            color: white; 
-            border: none; 
-            border-radius: 8px; 
-            margin: 5px; 
-            font-weight: bold;
-        }
-        button:disabled { 
-            background: #555; 
-            cursor: not-allowed;
-        }
-        #status { 
-            margin-top: 15px; 
-            font-size: 14px; 
-            color: #aaa; 
-            min-height: 20px; 
-            max-width: 90%; 
-            text-align: center;
-        }
-        .footer {
-            margin-top: 40px;
-            font-size: 14px;
-            color: #888;
-            text-align: center;
-            max-width: 700px;
-            line-height: 1.8;
-        }
-        .footer p {
-            margin: 15px 0;
-        }
-        .footer strong {
-            color: #ccc;
-        }
-    </style>
-    
-    <!-- FFmpeg.wasm for MP4 conversion (required for Android support) -->
-    <script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
-    <script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.0/dist/util.min.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>THE CRIME TO SAY KARAOKE CHALLENGE!</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/styles.css">
+  <!-- ffmpeg.wasm (optional fallback) -->
+  <script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
-    <h1>'CRIME TO SAY...' KARAOKE BOOTH</h1>
+  <main id="app">
+    <h1 id="title">THE CRIME TO SAY KARAOKE CHALLENGE!</h1>
 
-    <div class="instructions">
-        <p>1. Sing, record, post!</p>
-        <p>2. Use hashtag <strong>#CrimeToSay</strong></p>
-        <p>3. Tag or DM <strong>@MattOBranain</strong> (Insta / X / TikTok)</p>
+    <p class="lead">1. Sing, record & post!<br>2. Tag or DM <strong>@MattOBranain</strong></p>
+
+    <section id="preview-shell" aria-label="Live preview">
+      <div id="preview-container">
+        <video id="preview" autoplay playsinline muted aria-hidden="true"></video>
+        <canvas id="compose-canvas" width="1080" height="1920" aria-hidden="true"></canvas>
+
+        <!-- Live-only count-in overlay -->
+        <div id="countin" aria-hidden="true" role="status"></div>
+
+      </div>
+    </section>
+
+    <div id="controls" role="group" aria-label="Recording controls">
+      <button id="start" class="btn start" aria-label="Start recording">START</button>
+      <button id="stop" class="btn stop" aria-label="Stop recording" disabled>STOP</button>
     </div>
 
-    <div id="preview-container">
-        <video id="preview" autoplay playsinline muted></video>
-        <canvas id="processing-canvas" width="1080" height="1920"></canvas>
-    </div>
+    <p id="helper">When you press start a timer will count you in.</p>
 
-    <div id="controls">
-        <button id="startBtn">Start Recording</button>
-        <button id="stopBtn" disabled>Stop</button>
-    </div>
-    <div id="status">Ready</div>
+    <div id="status" aria-live="polite">Ready</div>
 
-    <!-- Footer -->
-    <div class="footer">
-        <p><strong>Defend Our Juries advise:</strong> 'Replicating this video (song) comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video (song) is doing. It is also not illegal to campaign for the de-proscription of a group. If you do experience any legal issues resulting from joining this truth-telling trend, please email info at defendourjuries dot org'</p>
-        <p>For other enquiries or collaboration ideas contact matt.o.branain at protonmail dot com.</p>
-    </div>
+    <section class="legal">
+      <p>Defend Our Juries say: 'Replicating this video comes with potential, but unlikely, risk of arrest. It is not illegal to publicly state the law, as this video is doing. It is also not illegal to campaign for the de-proscription of a group. If you do experience any legal issues resulting from joining this truth-telling trend, please email info at defendourjuries dot org.'</p>
+      <p>For other enquiries or collaboration ideas contact info at crime2say.uk</p>
+    </section>
 
-    <!-- IMPORTANT: type="module" is required for the imports in app.js -->
-    <script type="module" src="app.js"></script>
+  </main>
+
+  <script type="module" src="/new-app.js"></script>
 </body>
 </html>
