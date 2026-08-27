@@ -1,0 +1,23 @@
+# GitHub Pages Configuration for Crime to Say Karaoke Booth
+
+# Theme (optional)
+theme: null
+
+# Security & Performance
+plugins:
+  - jekyll-redirect-from
+
+# CORS Configuration
+markdown: kramdown
+kramdown:
+  input: GFM
+
+# Build settings
+exclude:
+  - node_modules
+  - .git
+  - .gitignore
+
+# Enable HTTPS
+url: "https://mattobranain.github.io"
+baseurl: "/Crime-to-Say-Karaoke-Challange"
