@@ -466,11 +466,12 @@ function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
   const lastWord = words[words.length - 1];
 
   if (t < firstWord.start) {
-    // Base the entry's lead-in time on the actual gap since the *previous*
-    // line's last word, not this line's own bracket timestamp — those often
-    // coincide (many lines' first word has no lead-in tag and starts right
-    // at the line marker), which left zero runway for the fly-in animation
-    // and made the ball just snap onto the word out of nowhere.
+    // Only reachable if this line's first word starts some time after the
+    // line itself becomes active (a genuine lead-in gap). For lines built
+    // by splitLyricLines() the two are identical, so this never actually
+    // gets a chance to run for them — their fly-in is instead rendered by
+    // the *previous* line's exit-hop below, which is the only place that
+    // has any render time available before the boundary.
     const prevLine = lyricLines[lineIndex - 1];
     const prevLastWordStart =
       prevLine && prevLine.words.length
@@ -484,12 +485,41 @@ function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
       y = restY - Math.sin(Math.PI * p) * amplitude;
     }
   } else if (activeIndex === words.length - 1) {
-    const exitDuration = Math.min(0.5, line.end - lastWord.start);
-    if (exitDuration > 0) {
-      const p = clamp((t - lastWord.start) / exitDuration, 0, 1);
-      const eased = easeInOut(p);
-      x = lerp(lastWord.x, offRight, eased);
-      y = restY - Math.sin(Math.PI * eased) * amplitude * 0.85;
+    // On the last word: bounce off toward the right, then — using the same
+    // render call, since the next line may become "active" at the exact
+    // instant its first word starts, leaving it no time of its own — fly
+    // back in from the left and land on the next line's first word. Doing
+    // both halves here, with knowledge of where that word actually is,
+    // is what makes the fly-in visible at all for back-to-back lines.
+    const nextLine = lyricLines[lineIndex + 1];
+    const nextFirstWord = nextLine && nextLine.words.length ? nextLine.words[0] : null;
+
+    if (nextFirstWord) {
+      const totalGap = nextFirstWord.start - lastWord.start;
+      const hopDuration = Math.min(1.6, totalGap);
+      if (hopDuration > 0 && t >= lastWord.start) {
+        const p = clamp((t - lastWord.start) / hopDuration, 0, 1);
+        if (p < 0.5) {
+          const localP = easeInOut(p / 0.5);
+          x = lerp(lastWord.x, offRight, localP);
+          y = restY - Math.sin(Math.PI * localP) * amplitude * 0.85;
+        } else {
+          const nextLineWords = layoutLine(nextLine, lyricFontSize);
+          const landingX = nextLineWords[0].x;
+          const localP = easeInOut((p - 0.5) / 0.5);
+          x = lerp(offLeft, landingX, localP);
+          y = restY - Math.sin(Math.PI * localP) * amplitude;
+        }
+      }
+    } else {
+      // Last line of the song: just exit, nothing to fly in toward.
+      const exitDuration = Math.min(0.5, line.end - lastWord.start);
+      if (exitDuration > 0) {
+        const p = clamp((t - lastWord.start) / exitDuration, 0, 1);
+        const eased = easeInOut(p);
+        x = lerp(lastWord.x, offRight, eased);
+        y = restY - Math.sin(Math.PI * eased) * amplitude * 0.85;
+      }
     }
   } else if (activeIndex >= 0 && activeIndex < words.length - 1) {
     const a = words[activeIndex];
