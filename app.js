@@ -4,13 +4,18 @@
 // overlay, mixed audio recording, and MP4 export ready for sharing.
 // =====================================================================
 
-const AUDIO_FILE = './crime-2-say-oke-shortest.mp3';
+// This file now has its own 1-bar (4-beat, 80bpm) intro baked in with real
+// instrumental sound, replacing the old silent gap we used to fill with our
+// own synthesized count-in beeps. Everything else about the song (and the
+// .lrc timings) is unchanged relative to where the "real" song content
+// starts, i.e. exactly 1 bar into the file.
+const AUDIO_FILE = './Crime2Say-Oke-Short-wIntro.mp3';
 const LRC_FILE = './crime-2-say-oke-shortest.lrc';
 const OUTPUT_PREFIX = 'Crime2Say-';
 
 const BPM = 80;
 const BEAT_SEC = 60 / BPM;
-const B3_FREQ = 246.94;
+const INTRO_BEATS = 4; // 1 bar at 80bpm, baked into the start of AUDIO_FILE
 
 // Audio mix levels. Two separate music gains are used: one for what the
 // singer hears live (kept loud so they can perform to it), and a lower one
@@ -48,6 +53,13 @@ const END_LINE_2 = 'CRIME2SAY.UK';
 
 const GREEN_BRIGHT = '#00ff7f';
 const WHITE = '#ffffff';
+const RED_SHADOW = '#5e1414'; // dark, matte, desaturated red — a counterpoint to the green, not a bright accent
+
+// Long "infinity" shadow behind the title/end cards: cast at 60° from the
+// horizontal, flat matte fill, no outline.
+const SHADOW_ANGLE_RAD = (60 * Math.PI) / 180;
+const SHADOW_DX = Math.cos(SHADOW_ANGLE_RAD);
+const SHADOW_DY = Math.sin(SHADOW_ANGLE_RAD);
 
 // ---------------------------------------------------------------------
 // DOM
@@ -476,7 +488,9 @@ function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
 
 // Centered two-line title/end card, used for the moment before the music
 // kicks in and the moment after the last lyric — not shown during singing.
-function drawCenteredCard(line1, line2, color = GREEN_BRIGHT) {
+// `elapsed` is seconds since this particular card started being shown, and
+// drives a quick pop-in (scale + fade) entrance animation.
+function drawCenteredCard(line1, line2, color = GREEN_BRIGHT, elapsed = Infinity) {
   const isPortrait = CANVAS.height >= CANVAS.width;
   const marginRatio = isPortrait ? 0.88 : 0.8;
   const fontSpec = (px) => `bold ${px}px Arial`;
@@ -492,20 +506,44 @@ function drawCenteredCard(line1, line2, color = GREEN_BRIGHT) {
   const centerY = bottomThirdY - gap / 2 - size * 0.5;
   const y1 = centerY - gap / 2;
   const y2 = centerY + gap / 2;
+  const cx = CANVAS.width / 2;
+
+  const REVEAL_DUR = 0.4;
+  const revealEased = easeInOut(clamp(elapsed / REVEAL_DUR, 0, 1));
+  const scale = 0.85 + 0.15 * revealEased;
+
+  CTX.save();
+  CTX.globalAlpha = revealEased;
+  CTX.translate(cx, centerY);
+  CTX.scale(scale, scale);
+  CTX.translate(-cx, -centerY);
 
   CTX.font = fontSpec(size);
   CTX.textAlign = 'center';
   CTX.textBaseline = 'middle';
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
+
+  // Long matte-red "infinity" shadow cast at 60°, flat fill, no outline —
+  // a stack of solid copies trailing away from the text, drawn before it.
+  const shadowReach = Math.round(size * 1.8);
+  const shadowStep = 2;
+  CTX.fillStyle = RED_SHADOW;
+  for (let d = shadowReach; d >= shadowStep; d -= shadowStep) {
+    const ox = SHADOW_DX * d;
+    const oy = SHADOW_DY * d;
+    CTX.fillText(line1, cx + ox, y1 + oy);
+    CTX.fillText(line2, cx + ox, y2 + oy);
+  }
+
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
   CTX.fillStyle = color;
+  CTX.strokeText(line1, cx, y1);
+  CTX.fillText(line1, cx, y1);
+  CTX.strokeText(line2, cx, y2);
+  CTX.fillText(line2, cx, y2);
 
-  CTX.strokeText(line1, CANVAS.width / 2, y1);
-  CTX.fillText(line1, CANVAS.width / 2, y1);
-  CTX.strokeText(line2, CANVAS.width / 2, y2);
-  CTX.fillText(line2, CANVAS.width / 2, y2);
-
+  CTX.restore();
   CTX.textAlign = 'left';
   CTX.textBaseline = 'alphabetic';
 }
@@ -564,10 +602,11 @@ function renderLoop() {
     const t = audioCtx.currentTime - musicStartAudioTime;
     const lastLineEnd = lyricLines.length ? lyricLines[lyricLines.length - 1].end : Infinity;
     if (t < 0) {
-      // Visible from the very first frame of the recording.
-      drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2);
+      // Visible from the very first frame of the recording; t starts at
+      // -(INTRO_BEATS * BEAT_SEC) when the file (and recording) begins.
+      drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2, GREEN_BRIGHT, t + INTRO_BEATS * BEAT_SEC);
     } else if (t >= lastLineEnd) {
-      drawCenteredCard(END_LINE_1, END_LINE_2, WHITE);
+      drawCenteredCard(END_LINE_1, END_LINE_2, WHITE, t - lastLineEnd);
     } else {
       drawLyricsAndBall(t);
     }
@@ -617,38 +656,25 @@ async function startSequence() {
 function runCountIn(ctx) {
   return new Promise((resolve) => {
     const now = ctx.currentTime;
-    const labels = ['3', '2', '1', 'GO!'];
+    // The music file now supplies its own audible 1-bar intro, so it starts
+    // almost immediately rather than after a separate silent count-in — a
+    // tiny buffer here just gives the scheduling a clean moment to land on.
+    const fileStart = now + 0.05;
+    startMusic(ctx, fileStart); // sets musicStartAudioTime = fileStart + 1 bar
 
+    const labels = ['3', '2', '1', 'GO!'];
     COUNTDOWN.classList.remove('hidden');
 
     labels.forEach((label, i) => {
-      const when = now + i * BEAT_SEC;
-      playCountTone(ctx, when);
+      const when = fileStart + i * BEAT_SEC;
       setTimeout(() => { COUNTDOWN.textContent = label; }, Math.max(0, (when - now) * 1000));
     });
-
-    const musicAt = now + 4 * BEAT_SEC; // downbeat following the 4-count
-    startMusic(ctx, musicAt);
 
     setTimeout(() => {
       COUNTDOWN.classList.add('hidden');
       resolve();
-    }, Math.max(0, (musicAt - now) * 1000));
+    }, Math.max(0, (musicStartAudioTime - now) * 1000));
   });
-}
-
-function playCountTone(ctx, when) {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'sine';
-  osc.frequency.value = B3_FREQ;
-  gain.gain.setValueAtTime(0.0001, when);
-  gain.gain.exponentialRampToValueAtTime(0.32, when + 0.008);
-  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.15);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(when);
-  osc.stop(when + 0.18);
 }
 
 function beginRecording(ctx) {
@@ -751,9 +777,12 @@ function beginRecording(ctx) {
   mediaRecorder.start(200);
 }
 
-function startMusic(ctx, musicStartTime) {
-  musicSourceNode.start(musicStartTime);
-  musicStartAudioTime = musicStartTime;
+function startMusic(ctx, fileStartTime) {
+  musicSourceNode.start(fileStartTime);
+  // Lyrics/ball/title-card timing (t=0) is anchored 1 bar into the file,
+  // where the file's baked-in intro ends and the actual song content
+  // (matching the .lrc's own timestamps) begins.
+  musicStartAudioTime = fileStartTime + INTRO_BEATS * BEAT_SEC;
   musicSourceNode.onended = () => {
     if (appState === 'recording') stopSequence();
   };

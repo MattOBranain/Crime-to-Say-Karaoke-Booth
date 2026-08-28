@@ -1,6 +1,7 @@
 :root {
   --parakeet: #00ff7f;
   --parakeet-dim: #0f8a4c;
+  --red-dark: #5e1414;
   --white: #ffffff;
   --black: #000000;
   --panel: #0a0d0a;
@@ -45,7 +46,64 @@ h1 {
   font-size: clamp(1.4rem, 7.2vw, 2.1rem);
   line-height: 1.15;
   letter-spacing: 0.5px;
-  text-shadow: 0 0 14px rgba(0, 255, 127, 0.35);
+  /* Exaggerated flat "infinity" shadow cast at 60° from the horizontal, one
+     matte red, no glow/outline — a long trailing stack of solid copies. */
+  text-shadow:
+    27.5px 47.63px 0 var(--red-dark),
+    27.0px 46.77px 0 var(--red-dark),
+    26.5px 45.9px 0 var(--red-dark),
+    26.0px 45.03px 0 var(--red-dark),
+    25.5px 44.17px 0 var(--red-dark),
+    25.0px 43.3px 0 var(--red-dark),
+    24.5px 42.44px 0 var(--red-dark),
+    24.0px 41.57px 0 var(--red-dark),
+    23.5px 40.7px 0 var(--red-dark),
+    23.0px 39.84px 0 var(--red-dark),
+    22.5px 38.97px 0 var(--red-dark),
+    22.0px 38.11px 0 var(--red-dark),
+    21.5px 37.24px 0 var(--red-dark),
+    21.0px 36.37px 0 var(--red-dark),
+    20.5px 35.51px 0 var(--red-dark),
+    20.0px 34.64px 0 var(--red-dark),
+    19.5px 33.77px 0 var(--red-dark),
+    19.0px 32.91px 0 var(--red-dark),
+    18.5px 32.04px 0 var(--red-dark),
+    18.0px 31.18px 0 var(--red-dark),
+    17.5px 30.31px 0 var(--red-dark),
+    17.0px 29.44px 0 var(--red-dark),
+    16.5px 28.58px 0 var(--red-dark),
+    16.0px 27.71px 0 var(--red-dark),
+    15.5px 26.85px 0 var(--red-dark),
+    15.0px 25.98px 0 var(--red-dark),
+    14.5px 25.11px 0 var(--red-dark),
+    14.0px 24.25px 0 var(--red-dark),
+    13.5px 23.38px 0 var(--red-dark),
+    13.0px 22.52px 0 var(--red-dark),
+    12.5px 21.65px 0 var(--red-dark),
+    12.0px 20.78px 0 var(--red-dark),
+    11.5px 19.92px 0 var(--red-dark),
+    11.0px 19.05px 0 var(--red-dark),
+    10.5px 18.19px 0 var(--red-dark),
+    10.0px 17.32px 0 var(--red-dark),
+    9.5px 16.45px 0 var(--red-dark),
+    9.0px 15.59px 0 var(--red-dark),
+    8.5px 14.72px 0 var(--red-dark),
+    8.0px 13.86px 0 var(--red-dark),
+    7.5px 12.99px 0 var(--red-dark),
+    7.0px 12.12px 0 var(--red-dark),
+    6.5px 11.26px 0 var(--red-dark),
+    6.0px 10.39px 0 var(--red-dark),
+    5.5px 9.53px 0 var(--red-dark),
+    5.0px 8.66px 0 var(--red-dark),
+    4.5px 7.79px 0 var(--red-dark),
+    4.0px 6.93px 0 var(--red-dark),
+    3.5px 6.06px 0 var(--red-dark),
+    3.0px 5.2px 0 var(--red-dark),
+    2.5px 4.33px 0 var(--red-dark),
+    2.0px 3.46px 0 var(--red-dark),
+    1.5px 2.6px 0 var(--red-dark),
+    1.0px 1.73px 0 var(--red-dark),
+    0.5px 0.87px 0 var(--red-dark);
 }
 
 /* ---------- Booth / camera preview ---------- */
@@ -62,7 +120,9 @@ h1 {
   background: var(--panel);
   border-radius: 12px;
   overflow: hidden;
-  border: 2px solid var(--parakeet-dim);
+  border: 3px solid var(--parakeet-dim);
+  outline: 10px solid var(--red-dark);
+  outline-offset: 0;
 }
 
 #preview {
@@ -215,13 +275,6 @@ h1 {
 .disclaimer a { color: var(--parakeet); }
 .disclaimer a.quiet-link { color: var(--white); }
 
-.site-footer {
-  text-align: center;
-  font-family: Arial, Helvetica, sans-serif;
-  color: rgba(255, 255, 255, 0.69);
-  font-size: 0.85rem;
-  padding: 4px 0 2px;
-}
 
 /* ---------- Modal ---------- */
 .modal {
