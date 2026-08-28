@@ -46,13 +46,12 @@ const MUSIC_REC_SYNC_DELAY_SEC = 0.13;
 const VIDEO_CAPTURE_LATENCY_SEC = 0.18;
 
 const MAX_CANVAS_DIM = 1280;
-const TITLE_LINE_1 = 'CRIME TO SAY';
-const TITLE_LINE_2 = 'KARAOKE CHALLENGE';
-const END_LINE_1 = 'JOIN THE CRIME2SAY KARAOKE CHALLENGE:';
-const END_LINE_2 = 'CRIME2SAY.UK';
+const TITLE_LINES = ['THE CRIME TO SAY', 'KARAOKE', 'CHALLENGE!'];
+const END_LINES = ['JOIN THE CRIME TO SAY', 'KARAOKE CHALLENGE:', 'AT CRIME2SAY.UK'];
 
 const GREEN_BRIGHT = '#00ff7f';
 const WHITE = '#ffffff';
+const RED_DROP_SHADOW = '#3d0808'; // very dark red, flat drop shadow behind the title/end card text
 
 // ---------------------------------------------------------------------
 // DOM
@@ -122,6 +121,13 @@ PERMISSION_RETRY.addEventListener('click', initCamera);
 RECORD_BTN.addEventListener('click', onRecordButton);
 RETRY_BTN.addEventListener('click', resetForNewTake);
 SAVE_BTN.addEventListener('click', onSaveClicked);
+
+// Tapping the backdrop (not the panel itself) closes the result and resets
+// for a new take — only once a finished video is actually showing, so this
+// can't interrupt an in-progress conversion.
+MODAL.addEventListener('click', (e) => {
+  if (e.target === MODAL && pendingBlob) resetForNewTake();
+});
 
 // ---------------------------------------------------------------------
 // Camera / mic setup
@@ -483,27 +489,27 @@ function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
 // kicks in and the moment after the last lyric — not shown during singing.
 // `elapsed` is seconds since this particular card started being shown, and
 // drives a quick pop-in (scale + fade) entrance animation.
-function drawCenteredCard(line1, line2, color = GREEN_BRIGHT, elapsed = Infinity) {
+function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity) {
   const isPortrait = CANVAS.height >= CANVAS.width;
   const marginRatio = isPortrait ? 0.88 : 0.8;
   const fontSpec = (px) => `bold ${px}px Arial`;
 
-  let size = fitFontSizeToWidth([line1, line2], marginRatio, fontSpec);
+  let size = fitFontSizeToWidth(lines, marginRatio, fontSpec);
   size = Math.min(size, Math.round(CANVAS.height * (isPortrait ? 0.1 : 0.13)));
   size = Math.max(size, Math.round(CANVAS.width * 0.045));
 
   const gap = size * 1.35;
-  // Anchor the block so the bottom edge of the lower line sits right on
+  // Anchor the block so the bottom edge of the lowest line sits right on
   // the bottom-third line, i.e. the whole card sits above that line.
   const bottomThirdY = CANVAS.height * (2 / 3);
-  const centerY = bottomThirdY - gap / 2 - size * 0.5;
-  const y1 = centerY - gap / 2;
-  const y2 = centerY + gap / 2;
+  const lastY = bottomThirdY - gap / 2 - size * 0.5;
+  const firstY = lastY - gap * (lines.length - 1);
   const cx = CANVAS.width / 2;
 
   const REVEAL_DUR = 0.4;
   const revealEased = easeInOut(clamp(elapsed / REVEAL_DUR, 0, 1));
   const scale = 0.85 + 0.15 * revealEased;
+  const centerY = (firstY + lastY) / 2;
 
   CTX.save();
   CTX.globalAlpha = revealEased;
@@ -516,13 +522,23 @@ function drawCenteredCard(line1, line2, color = GREEN_BRIGHT, elapsed = Infinity
   CTX.textBaseline = 'middle';
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
 
+  // Pronounced flat drop shadow, very dark red, no outline — drawn once,
+  // offset behind the main text.
+  const shadowOffset = Math.round(size * 0.09);
+  CTX.fillStyle = RED_DROP_SHADOW;
+  lines.forEach((line, i) => {
+    const y = firstY + gap * i;
+    CTX.fillText(line, cx + shadowOffset, y + shadowOffset);
+  });
+
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
   CTX.fillStyle = color;
-  CTX.strokeText(line1, cx, y1);
-  CTX.fillText(line1, cx, y1);
-  CTX.strokeText(line2, cx, y2);
-  CTX.fillText(line2, cx, y2);
+  lines.forEach((line, i) => {
+    const y = firstY + gap * i;
+    CTX.strokeText(line, cx, y);
+    CTX.fillText(line, cx, y);
+  });
 
   CTX.restore();
   CTX.textAlign = 'left';
@@ -585,9 +601,9 @@ function renderLoop() {
     if (t < 0) {
       // Visible from the very first frame of the recording; t starts at
       // -(INTRO_BEATS * BEAT_SEC) when the file (and recording) begins.
-      drawCenteredCard(TITLE_LINE_1, TITLE_LINE_2, GREEN_BRIGHT, t + INTRO_BEATS * BEAT_SEC);
+      drawCenteredCard(TITLE_LINES, GREEN_BRIGHT, t + INTRO_BEATS * BEAT_SEC);
     } else if (t >= lastLineEnd) {
-      drawCenteredCard(END_LINE_1, END_LINE_2, WHITE, t - lastLineEnd);
+      drawCenteredCard(END_LINES, GREEN_BRIGHT, t - lastLineEnd);
     } else {
       drawLyricsAndBall(t);
     }

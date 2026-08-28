@@ -64,7 +64,7 @@ h1 {
   background: var(--panel);
   border-radius: 12px;
   overflow: hidden;
-  border: 6px solid var(--parakeet-dim);
+  border: 12px solid var(--parakeet-dim);
 }
 
 #preview {
@@ -175,7 +175,7 @@ h1 {
 }
 
 .rec-btn__label {
-  color: var(--white);
+  color: var(--black);
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: 1px;
@@ -223,7 +223,6 @@ h1 {
   padding-top: 12px;
 }
 
-.disclaimer a { color: var(--parakeet); }
 .disclaimer a.quiet-link { color: var(--white); }
 
 
