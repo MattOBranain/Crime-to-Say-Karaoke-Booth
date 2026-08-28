@@ -7,7 +7,7 @@ finished `.mp4` straight to your phone.
 ## Files
 
 - `index.html` / `styles.css` / `app.js` — the whole app (no build step, no framework).
-- `Crime2Say-Oke-Short-wIntro.mp3` — backing track, with a 1-bar (4-beat,
+- `Crime2Say-wintro.mp3` — backing track, with a 1-bar (4-beat,
   80bpm) intro baked into the start of the file.
 - `crime-2-say-oke-shortest.lrc` — enhanced (word-level) LRC lyric timing,
   relative to where the file's intro ends and the song content starts.
@@ -49,7 +49,7 @@ connection is required for its first load.
 
 1. In the repo settings, set GitHub Pages source to the `main` branch (root).
 2. The site is fully static — `index.html` at the repo root is the entire app.
-3. Keep `Crime2Say-Oke-Short-wIntro.mp3`, `crime-2-say-oke-shortest.lrc`,
+3. Keep `Crime2Say-wintro.mp3`, `crime-2-say-oke-shortest.lrc`,
    and `favicon.ico` at the repo root (the app fetches them by relative path).
 4. Commit & push; Pages publishes automatically (may take a minute).
 5. Custom domain: `crime2say.uk` via a `CNAME` file, pointed at GitHub Pages

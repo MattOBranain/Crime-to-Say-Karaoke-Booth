@@ -9,7 +9,7 @@
 // own synthesized count-in beeps. Everything else about the song (and the
 // .lrc timings) is unchanged relative to where the "real" song content
 // starts, i.e. exactly 1 bar into the file.
-const AUDIO_FILE = './Crime2Say-Oke-Short-wIntro.mp3';
+const AUDIO_FILE = './Crime2Say-wintro.mp3';
 const LRC_FILE = './crime-2-say-oke-shortest.lrc';
 const OUTPUT_PREFIX = 'Crime2Say-';
 
@@ -53,13 +53,6 @@ const END_LINE_2 = 'CRIME2SAY.UK';
 
 const GREEN_BRIGHT = '#00ff7f';
 const WHITE = '#ffffff';
-const RED_SHADOW = '#5e1414'; // dark, matte, desaturated red — a counterpoint to the green, not a bright accent
-
-// Long "infinity" shadow behind the title/end cards: cast at 60° from the
-// horizontal, flat matte fill, no outline.
-const SHADOW_ANGLE_RAD = (60 * Math.PI) / 180;
-const SHADOW_DX = Math.cos(SHADOW_ANGLE_RAD);
-const SHADOW_DY = Math.sin(SHADOW_ANGLE_RAD);
 
 // ---------------------------------------------------------------------
 // DOM
@@ -522,18 +515,6 @@ function drawCenteredCard(line1, line2, color = GREEN_BRIGHT, elapsed = Infinity
   CTX.textAlign = 'center';
   CTX.textBaseline = 'middle';
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
-
-  // Long matte-red "infinity" shadow cast at 60°, flat fill, no outline —
-  // a stack of solid copies trailing away from the text, drawn before it.
-  const shadowReach = Math.round(size * 1.8);
-  const shadowStep = 2;
-  CTX.fillStyle = RED_SHADOW;
-  for (let d = shadowReach; d >= shadowStep; d -= shadowStep) {
-    const ox = SHADOW_DX * d;
-    const oy = SHADOW_DY * d;
-    CTX.fillText(line1, cx + ox, y1 + oy);
-    CTX.fillText(line2, cx + ox, y2 + oy);
-  }
 
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
