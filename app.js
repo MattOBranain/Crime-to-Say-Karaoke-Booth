@@ -47,11 +47,12 @@ const VIDEO_CAPTURE_LATENCY_SEC = 0.18;
 
 const MAX_CANVAS_DIM = 1280;
 const TITLE_LINES = ['THE CRIME TO SAY', 'KARAOKE', 'CHALLENGE!'];
-const END_LINES = ['JOIN THE CRIME TO SAY', 'KARAOKE CHALLENGE:', 'AT CRIME2SAY.UK'];
+const END_LINES = ['JOIN THE CRIME TO SAY', 'KARAOKE CHALLENGE:', 'CRIME2SAY.UK'];
 
 const GREEN_BRIGHT = '#00ff7f';
+const RED_BRIGHT = '#ff2b2b'; // vivid highlight red, used for the active lyric word
 const WHITE = '#ffffff';
-const RED_DROP_SHADOW = '#3d0808'; // very dark red, flat drop shadow behind the title/end card text
+const RED_DROP_SHADOW = '#7a1414'; // dark red, flat drop shadow behind the title/end card text
 
 // ---------------------------------------------------------------------
 // DOM
@@ -420,7 +421,7 @@ function drawLyricsAndBall(t) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const isActive = i === activeIndex;
-    CTX.fillStyle = isActive ? GREEN_BRIGHT : WHITE;
+    CTX.fillStyle = isActive ? RED_BRIGHT : WHITE;
     CTX.strokeStyle = 'rgba(0,0,0,0.85)';
     const drawX = w.x - w.width / 2;
     CTX.strokeText(w.text, drawX, baselineY);
@@ -485,11 +486,15 @@ function drawBall(lineIndex, line, words, activeIndex, t, baselineY) {
   CTX.fill();
 }
 
-// Centered two-line title/end card, used for the moment before the music
+// Centered multi-line title/end card, used for the moment before the music
 // kicks in and the moment after the last lyric — not shown during singing.
 // `elapsed` is seconds since this particular card started being shown, and
-// drives a quick pop-in (scale + fade) entrance animation.
-function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity) {
+// drives a quick pop-in scale animation (never starts invisible, so it's
+// always clearly there from the very first frame it's shown on).
+// `anchorLineIndex`: null anchors the bottom edge of the last line to the
+// bottom-third line (used for the title); a number anchors the vertical
+// center of that line index to it instead (used for the end card).
+function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity, anchorLineIndex = null) {
   const isPortrait = CANVAS.height >= CANVAS.width;
   const marginRatio = isPortrait ? 0.88 : 0.8;
   const fontSpec = (px) => `bold ${px}px Arial`;
@@ -499,20 +504,24 @@ function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity) {
   size = Math.max(size, Math.round(CANVAS.width * 0.045));
 
   const gap = size * 1.35;
-  // Anchor the block so the bottom edge of the lowest line sits right on
-  // the bottom-third line, i.e. the whole card sits above that line.
   const bottomThirdY = CANVAS.height * (2 / 3);
-  const lastY = bottomThirdY - gap / 2 - size * 0.5;
-  const firstY = lastY - gap * (lines.length - 1);
+  let firstY;
+  if (anchorLineIndex !== null) {
+    firstY = bottomThirdY - gap * anchorLineIndex;
+  } else {
+    // Bottom edge of the lowest line sits right on the bottom-third line.
+    const lastY = bottomThirdY - gap / 2 - size * 0.5;
+    firstY = lastY - gap * (lines.length - 1);
+  }
+  const lastY = firstY + gap * (lines.length - 1);
   const cx = CANVAS.width / 2;
 
-  const REVEAL_DUR = 0.4;
-  const revealEased = easeInOut(clamp(elapsed / REVEAL_DUR, 0, 1));
-  const scale = 0.85 + 0.15 * revealEased;
+  const REVEAL_DUR = 0.18;
+  const revealEased = 0.5 + 0.5 * easeInOut(clamp(elapsed / REVEAL_DUR, 0, 1));
+  const scale = 0.92 + 0.08 * revealEased;
   const centerY = (firstY + lastY) / 2;
 
   CTX.save();
-  CTX.globalAlpha = revealEased;
   CTX.translate(cx, centerY);
   CTX.scale(scale, scale);
   CTX.translate(-cx, -centerY);
@@ -522,14 +531,20 @@ function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity) {
   CTX.textBaseline = 'middle';
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
 
-  // Pronounced flat drop shadow, very dark red, no outline — drawn once,
+  // Pronounced drop shadow, dark red, with real spread (blur) — drawn once,
   // offset behind the main text.
-  const shadowOffset = Math.round(size * 0.09);
+  const shadowOffset = Math.round(size * 0.13);
+  CTX.save();
+  CTX.shadowColor = RED_DROP_SHADOW;
+  CTX.shadowBlur = size * 0.16;
+  CTX.shadowOffsetX = shadowOffset;
+  CTX.shadowOffsetY = shadowOffset;
   CTX.fillStyle = RED_DROP_SHADOW;
   lines.forEach((line, i) => {
     const y = firstY + gap * i;
-    CTX.fillText(line, cx + shadowOffset, y + shadowOffset);
+    CTX.fillText(line, cx, y);
   });
+  CTX.restore();
 
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
@@ -603,7 +618,9 @@ function renderLoop() {
       // -(INTRO_BEATS * BEAT_SEC) when the file (and recording) begins.
       drawCenteredCard(TITLE_LINES, GREEN_BRIGHT, t + INTRO_BEATS * BEAT_SEC);
     } else if (t >= lastLineEnd) {
-      drawCenteredCard(END_LINES, GREEN_BRIGHT, t - lastLineEnd);
+      // Anchor line index 1 ("KARAOKE CHALLENGE:", the middle line) so its
+      // vertical center sits on the bottom-third line.
+      drawCenteredCard(END_LINES, GREEN_BRIGHT, t - lastLineEnd, 1);
     } else {
       drawLyricsAndBall(t);
     }
