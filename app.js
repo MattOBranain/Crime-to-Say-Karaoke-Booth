@@ -50,7 +50,6 @@ const TITLE_LINES = ['THE CRIME TO SAY', 'KARAOKE', 'CHALLENGE!'];
 const END_LINES = ['JOIN THE CRIME TO SAY', 'KARAOKE CHALLENGE:', 'CRIME2SAY.UK'];
 
 const GREEN_BRIGHT = '#00ff7f';
-const RED_BRIGHT = '#ff2b2b'; // vivid highlight red, used for the active lyric word
 const WHITE = '#ffffff';
 const RED_DROP_SHADOW = '#7a1414'; // dark red, flat drop shadow behind the title/end card text
 
@@ -254,12 +253,35 @@ setInterval(() => {
 async function loadLyrics() {
   try {
     const text = await (await fetch(LRC_FILE)).text();
-    lyricLines = parseEnhancedLRC(text);
+    lyricLines = splitLyricLines(parseEnhancedLRC(text));
     lyricFontSize = computeLyricFontSize();
   } catch (e) {
     console.warn('Could not load lyrics file', e);
     lyricLines = [];
   }
+}
+
+// The .lrc groups "IN THE U.K. IT'S A CRIME TO SAY" and "'I SUPPORT
+// PALESTINE ACTION'" as single 8- and 4-word lines each (repeated twice).
+// On screen that's too long for one big line, so each is redisplayed as two
+// shorter lines instead: "IN THE UK" / "IT'S A CRIME TO SAY" and "'I
+// SUPPORT" / "PALESTINE ACTION!'". This only regroups words into display
+// lines — word-level timing from the .lrc is untouched.
+function splitLyricLines(lines) {
+  const result = [];
+  for (const line of lines) {
+    const cut = line.words.length === 8 ? 3 : line.words.length === 4 ? 2 : null;
+    if (cut === null) {
+      result.push(line);
+      continue;
+    }
+    const wordsA = line.words.slice(0, cut);
+    const wordsB = line.words.slice(cut);
+    const boundary = wordsB[0].start;
+    result.push({ start: line.start, end: boundary, words: wordsA });
+    result.push({ start: boundary, end: line.end, words: wordsB });
+  }
+  return result;
 }
 
 function timeToSeconds(mm, ss) {
@@ -416,13 +438,13 @@ function drawLyricsAndBall(t) {
   CTX.textAlign = 'left';
   CTX.lineJoin = 'round';
   CTX.font = `bold ${lyricFontSize}px Arial`;
-  CTX.lineWidth = Math.max(2, Math.round(lyricFontSize * 0.08));
+  CTX.lineWidth = Math.max(3, Math.round(lyricFontSize * 0.1));
 
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const isActive = i === activeIndex;
-    CTX.fillStyle = isActive ? RED_BRIGHT : WHITE;
-    CTX.strokeStyle = 'rgba(0,0,0,0.85)';
+    CTX.fillStyle = isActive ? GREEN_BRIGHT : WHITE;
+    CTX.strokeStyle = '#000000';
     const drawX = w.x - w.width / 2;
     CTX.strokeText(w.text, drawX, baselineY);
     CTX.fillText(w.text, drawX, baselineY);

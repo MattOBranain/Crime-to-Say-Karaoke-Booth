@@ -64,7 +64,7 @@ h1 {
   background: var(--panel);
   border-radius: 12px;
   overflow: hidden;
-  border: 12px solid var(--parakeet-dim);
+  border: 9px solid var(--parakeet);
 }
 
 #preview {
@@ -197,7 +197,7 @@ h1 {
   text-transform: uppercase;
   font-size: 1rem;
   font-weight: 700;
-  color: var(--white);
+  color: var(--parakeet);
 }
 
 .helper {
