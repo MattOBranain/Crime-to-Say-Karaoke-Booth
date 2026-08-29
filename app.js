@@ -77,6 +77,7 @@ const RECORD_BTN = document.getElementById('recordBtn');
 const RECORD_LABEL = RECORD_BTN.querySelector('.rec-btn__label');
 const HELPER_TEXT = document.getElementById('helperText');
 const BT_TOGGLE = document.getElementById('btToggle');
+const SKIP_MUSIC_TOGGLE = document.getElementById('skipMusicToggle');
 
 const MODAL = document.getElementById('resultModal');
 const MODAL_TITLE = document.getElementById('modalTitle');
@@ -852,21 +853,31 @@ function beginRecording(ctx) {
   musicSourceNode.connect(musicLiveGainNode);
   musicLiveGainNode.connect(ctx.destination); // audible during recording, never ducked, never delayed
 
-  // The recorded copy of the music is nudged later to match the mic's
-  // capture latency (see MUSIC_REC_SYNC_DELAY_SEC above) — a larger
-  // correction if the user has flagged a Bluetooth speaker/mic.
-  const musicRecDelay = ctx.createDelay(1.0);
-  musicRecDelay.delayTime.value = BT_TOGGLE.checked
-    ? MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC
-    : MUSIC_REC_SYNC_DELAY_SEC;
-  musicRecDelay.connect(recCompressor);
+  // If loud external speakers are playing the track, the mic will already
+  // be picking up that music acoustically alongside the voice — arriving
+  // together, through the same mic, inherently in sync, with no digital-
+  // vs-acoustic timing mismatch to correct for. Digitally mixing in our
+  // own clean copy on top of that risks an out-of-phase "doubled" sound,
+  // so this skips it entirely rather than trying to compensate for it.
+  if (SKIP_MUSIC_TOGGLE.checked) {
+    musicRecGainNode = null;
+  } else {
+    // The recorded copy of the music is nudged later to match the mic's
+    // capture latency (see MUSIC_REC_SYNC_DELAY_SEC above) — a larger
+    // correction if the user has flagged a Bluetooth speaker/mic.
+    const musicRecDelay = ctx.createDelay(1.0);
+    musicRecDelay.delayTime.value = BT_TOGGLE.checked
+      ? MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC
+      : MUSIC_REC_SYNC_DELAY_SEC;
+    musicRecDelay.connect(recCompressor);
 
-  musicRecGainNode = ctx.createGain();
-  musicRecGainNode.gain.value = MUSIC_REC_BASE_GAIN;
-  musicSourceNode.connect(musicRecGainNode);
-  musicRecGainNode.connect(musicRecDelay);
+    musicRecGainNode = ctx.createGain();
+    musicRecGainNode.gain.value = MUSIC_REC_BASE_GAIN;
+    musicSourceNode.connect(musicRecGainNode);
+    musicRecGainNode.connect(musicRecDelay);
 
-  runDuckingLoop(ctx, micAnalyser);
+    runDuckingLoop(ctx, micAnalyser);
+  }
 
   // ---- Video graph (composited canvas, manual frame-accurate capture) ----
   const { stream: canvasStream, manualTrack } = createCanvasCaptureStream();
