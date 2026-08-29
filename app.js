@@ -41,8 +41,11 @@ const MUSIC_REC_SYNC_DELAY_SEC = 0.13;
 // above. There's no reliable way to auto-detect "this is Bluetooth" across
 // browsers (device names aren't guaranteed to say so), so this is a second,
 // larger correction the user opts into via the on-page toggle. Tune this
-// based on real-world testing with the actual hardware being used.
-const MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC = 0.35;
+// based on real-world testing with the actual hardware being used. At
+// 80bpm an 8th note is 0.375s and a 16th note is 0.1875s — real-world
+// testing with a cheap Bluetooth karaoke mic placed this between the two,
+// closer to the 8th note.
+const MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC = 0.375;
 
 // Separately: the camera's own capture pipeline (sensor -> ISP -> browser)
 // means the *video* frame drawn "now" actually shows a moment slightly in
@@ -1046,9 +1049,16 @@ async function getFFmpeg() {
   return ffmpegPromise;
 }
 
+// The pan filter forces the output to genuine dual-channel stereo with the
+// same content on both sides (c0 = first input channel, duplicated to both
+// outputs) — fixes recordings coming out audible on the left channel only
+// regardless of how many channels the original recording actually had.
+const AUDIO_CHANNEL_FIX_ARGS = ['-af', 'pan=stereo|c0=c0|c1=c0'];
+
 const REENCODE_ARGS = [
   '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
   '-c:a', 'aac', '-b:a', '192k',
+  ...AUDIO_CHANNEL_FIX_ARGS,
   '-movflags', '+faststart',
   'output.mp4'
 ];
@@ -1066,18 +1076,30 @@ async function transcodeToMp4(blob) {
   });
 
   if (isMp4Source) {
-    // Fast path: just remux (no re-encode) to force a clean, finalized
-    // container — this is what actually fixes native-player compatibility.
+    // Fast path: video is just remuxed (no re-encode, forces a clean
+    // finalized container — what actually fixes native-player
+    // compatibility), but audio is still re-encoded through the channel
+    // fix above — a stream copy can't apply filters, and this is the one
+    // place we can guarantee the output is correct regardless of whatever
+    // channel layout the original recording actually used. Audio-only
+    // re-encoding of a clip this short is fast either way.
     // ffmpeg.wasm reports failure via a non-zero exit code rather than a
     // thrown exception, so check both.
     let code;
     try {
-      code = await ffmpeg.exec(['-i', inputName, '-c', 'copy', '-movflags', '+faststart', 'output.mp4']);
+      code = await ffmpeg.exec([
+        '-i', inputName,
+        '-c:v', 'copy',
+        '-c:a', 'aac', '-b:a', '192k',
+        ...AUDIO_CHANNEL_FIX_ARGS,
+        '-movflags', '+faststart',
+        'output.mp4'
+      ]);
     } catch (e) {
-      console.warn('Stream-copy remux threw, falling back to re-encode', e);
+      console.warn('Remux threw, falling back to full re-encode', e);
     }
     if (code !== 0) {
-      console.warn(`Stream-copy remux exited ${code}, falling back to re-encode`);
+      console.warn(`Remux exited ${code}, falling back to full re-encode`);
       await ffmpeg.exec(['-i', inputName, ...REENCODE_ARGS]);
     }
   } else {
