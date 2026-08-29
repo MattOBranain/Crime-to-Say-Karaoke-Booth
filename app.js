@@ -633,20 +633,21 @@ function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity, ancho
   CTX.textBaseline = 'middle';
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
 
-  // Pronounced drop shadow, dark red, with real spread (blur) — drawn once,
-  // offset behind the main text.
-  const shadowOffset = Math.round(size * 0.13);
-  CTX.save();
-  CTX.shadowColor = RED_DROP_SHADOW;
-  CTX.shadowBlur = size * 0.16;
-  CTX.shadowOffsetX = shadowOffset;
-  CTX.shadowOffsetY = shadowOffset;
+  // Pronounced drop shadow, dark red — a handful of solid copies stacked at
+  // increasing offsets, not canvas shadowBlur. shadowBlur is a genuinely
+  // expensive per-frame operation (a real blur convolution over the glyph
+  // shapes, redone every frame this card is on screen) and was a likely
+  // contributor to audio dropouts/lag on weaker devices — this gives the
+  // same "thick spread" look for a fraction of the cost.
+  const shadowStep = Math.round(size * 0.045);
   CTX.fillStyle = RED_DROP_SHADOW;
-  lines.forEach((line, i) => {
-    const y = firstY + gap * i;
-    CTX.fillText(line, cx, y);
-  });
-  CTX.restore();
+  for (let s = 5; s >= 1; s--) {
+    const so = shadowStep * s;
+    lines.forEach((line, i) => {
+      const y = firstY + gap * i;
+      CTX.fillText(line, cx + so, y + so);
+    });
+  }
 
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
@@ -842,7 +843,14 @@ function beginRecording(ctx) {
   const micMakeupGainNode = ctx.createGain();
   micMakeupGainNode.gain.value = MIC_MAKEUP_GAIN;
   micCompressor.connect(micMakeupGainNode);
-  micMakeupGainNode.connect(recCompressor);
+  // TEMP (latency-tuning aid): hard-pan mic to the left channel so it can
+  // be A/B'd against the music (hard-panned right, below) in headphones to
+  // measure the exact Bluetooth offset by ear. Remove both panners (and
+  // restore direct connections to recCompressor) once tuning is done.
+  const micDebugPanner = ctx.createStereoPanner();
+  micDebugPanner.pan.value = -1;
+  micMakeupGainNode.connect(micDebugPanner);
+  micDebugPanner.connect(recCompressor);
 
   const micAnalyser = ctx.createAnalyser();
   micAnalyser.fftSize = 512;
@@ -872,7 +880,12 @@ function beginRecording(ctx) {
     musicRecDelay.delayTime.value = BT_TOGGLE.checked
       ? MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC
       : MUSIC_REC_SYNC_DELAY_SEC;
-    musicRecDelay.connect(recCompressor);
+    // TEMP (latency-tuning aid): hard-pan music to the right channel to
+    // pair with the mic's hard-left pan above. See that comment.
+    const musicDebugPanner = ctx.createStereoPanner();
+    musicDebugPanner.pan.value = 1;
+    musicRecDelay.connect(musicDebugPanner);
+    musicDebugPanner.connect(recCompressor);
 
     musicRecGainNode = ctx.createGain();
     musicRecGainNode.gain.value = MUSIC_REC_BASE_GAIN;
@@ -1053,7 +1066,10 @@ async function getFFmpeg() {
 // same content on both sides (c0 = first input channel, duplicated to both
 // outputs) — fixes recordings coming out audible on the left channel only
 // regardless of how many channels the original recording actually had.
-const AUDIO_CHANNEL_FIX_ARGS = ['-af', 'pan=stereo|c0=c0|c1=c0'];
+// TEMP: disabled while the mic/music hard-pan debug split above is active —
+// this filter would collapse that split straight back to mono. Restore to
+// ['-af', 'pan=stereo|c0=c0|c1=c0'] once latency tuning is done.
+const AUDIO_CHANNEL_FIX_ARGS = [];
 
 const REENCODE_ARGS = [
   '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
