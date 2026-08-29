@@ -443,7 +443,18 @@ function computeLyricFontSize() {
   return fontSize;
 }
 
+// Cached per line (keyed on fontSize, which is constant for the duration of
+// a recording), since the render loop calls this every single frame — text
+// measurement is real, non-trivial work, and the result never changes
+// between frames while a line is on screen. Recomputing it 30-60 times a
+// second for content that hasn't changed was pure wasted CPU, sustained
+// for the entire recording rather than just a brief window — a much more
+// likely contributor to ongoing lag/dropouts than any one-off effect.
 function layoutLine(line, fontSize) {
+  if (line._layoutCache && line._layoutCache.fontSize === fontSize && line._layoutCache.canvasWidth === CANVAS.width) {
+    return line._layoutCache.words;
+  }
+
   CTX.font = `bold ${fontSize}px Arial`;
   const space = CTX.measureText(' ').width;
   const words = line.words.map((w) => ({ ...w, width: CTX.measureText(w.text).width }));
@@ -453,6 +464,8 @@ function layoutLine(line, fontSize) {
     w.x = x + w.width / 2;
     x += w.width + space;
   }
+
+  line._layoutCache = { fontSize, canvasWidth: CANVAS.width, words };
   return words;
 }
 
@@ -601,9 +614,19 @@ function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity, ancho
   const marginRatio = isPortrait ? 0.88 : 0.8;
   const fontSpec = (px) => `bold ${px}px Arial`;
 
-  let size = fitFontSizeToWidth(lines, marginRatio, fontSpec);
-  size = Math.min(size, Math.round(CANVAS.height * (isPortrait ? 0.1 : 0.13)));
-  size = Math.max(size, Math.round(CANVAS.width * 0.045));
+  // Same per-frame-recompute waste as layoutLine() below, and called every
+  // frame for the whole duration the title/end card is on screen — cache
+  // it the same way.
+  let size;
+  const cacheKey = `${marginRatio}|${CANVAS.width}|${CANVAS.height}`;
+  if (lines._sizeCache && lines._sizeCache.key === cacheKey) {
+    size = lines._sizeCache.size;
+  } else {
+    size = fitFontSizeToWidth(lines, marginRatio, fontSpec);
+    size = Math.min(size, Math.round(CANVAS.height * (isPortrait ? 0.1 : 0.13)));
+    size = Math.max(size, Math.round(CANVAS.width * 0.045));
+    lines._sizeCache = { key: cacheKey, size };
+  }
 
   const gap = size * 1.35;
   const bottomThirdY = CANVAS.height * (2 / 3);
