@@ -914,7 +914,7 @@ function beginRecording(ctx) {
   const mimeType = pickRecorderMimeType();
   mediaRecorder = new MediaRecorder(finalStream, {
     mimeType,
-    videoBitsPerSecond: 6_000_000,
+    videoBitsPerSecond: 3_500_000,
     audioBitsPerSecond: 192_000
   });
 
