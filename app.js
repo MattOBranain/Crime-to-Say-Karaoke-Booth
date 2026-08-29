@@ -62,7 +62,6 @@ const END_LINES = ['JOIN THE CRIME TO SAY', 'KARAOKE CHALLENGE:', 'CRIME2SAY.UK'
 
 const GREEN_BRIGHT = '#00ff7f';
 const WHITE = '#ffffff';
-const RED_DROP_SHADOW = '#7a1414'; // dark red, flat drop shadow behind the title/end card text
 
 // ---------------------------------------------------------------------
 // DOM
@@ -655,22 +654,6 @@ function drawCenteredCard(lines, color = GREEN_BRIGHT, elapsed = Infinity, ancho
   CTX.textAlign = 'center';
   CTX.textBaseline = 'middle';
   CTX.lineJoin = 'round'; // avoids spiky miter joins ("devil horns") on bold glyph corners
-
-  // Pronounced drop shadow, dark red — a handful of solid copies stacked at
-  // increasing offsets, not canvas shadowBlur. shadowBlur is a genuinely
-  // expensive per-frame operation (a real blur convolution over the glyph
-  // shapes, redone every frame this card is on screen) and was a likely
-  // contributor to audio dropouts/lag on weaker devices — this gives the
-  // same "thick spread" look for a fraction of the cost.
-  const shadowStep = Math.round(size * 0.045);
-  CTX.fillStyle = RED_DROP_SHADOW;
-  for (let s = 5; s >= 1; s--) {
-    const so = shadowStep * s;
-    lines.forEach((line, i) => {
-      const y = firstY + gap * i;
-      CTX.fillText(line, cx + so, y + so);
-    });
-  }
 
   CTX.lineWidth = Math.max(2, Math.round(size * 0.08));
   CTX.strokeStyle = 'rgba(0,0,0,0.85)';
