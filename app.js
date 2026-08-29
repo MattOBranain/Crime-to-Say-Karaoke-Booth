@@ -115,7 +115,25 @@ window.addEventListener('DOMContentLoaded', () => {
   preloadMusic();
   warmUpFFmpeg();
   initCamera();
+  registerOfflineCache();
 });
+
+// TEMPORARY: offline-caching for festival use with no network. See sw.js.
+// Once the cache finishes, tells the user on screen it's safe to go offline.
+function registerOfflineCache() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').catch((e) => {
+    console.warn('Offline cache registration failed', e);
+  });
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'OFFLINE_CACHE_READY') {
+      HELPER_TEXT.textContent = 'OFFLINE MODE READY';
+      setTimeout(() => {
+        if (appState === 'idle') HELPER_TEXT.textContent = '';
+      }, 8000);
+    }
+  });
+}
 
 PERMISSION_RETRY.addEventListener('click', initCamera);
 RECORD_BTN.addEventListener('click', onRecordButton);
