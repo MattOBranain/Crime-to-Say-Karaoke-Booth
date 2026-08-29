@@ -211,6 +211,24 @@ h1 {
   min-height: 1.3em;
 }
 
+.bt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: Arial, Helvetica, sans-serif;
+  text-transform: uppercase;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--parakeet);
+  cursor: pointer;
+}
+
+.bt-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--parakeet);
+}
+
 /* ---------- Disclaimer / footer ---------- */
 .disclaimer {
   font-family: "Courier New", Courier, monospace;

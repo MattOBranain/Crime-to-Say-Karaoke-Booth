@@ -11,7 +11,7 @@
 // device's browser is told to clear the site's data, or (Safari) if the
 // site goes unvisited for 7+ days.
 
-const CACHE_NAME = 'crime2say-offline-v1';
+const CACHE_NAME = 'crime2say-offline-v2';
 
 const PRECACHE_URLS = [
   './',

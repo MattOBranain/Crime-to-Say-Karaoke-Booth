@@ -35,6 +35,14 @@ const DUCK_THRESHOLD = 0.035;
 // the music (never live monitoring, never the mic) so it lines back up
 // with when the voice actually arrives. Tune this if a device still drifts.
 const MUSIC_REC_SYNC_DELAY_SEC = 0.13;
+// A Bluetooth speaker/mic (common for karaoke-style setups) adds its own
+// wireless latency on top of that, easily 150-300ms round trip on cheap
+// hardware with no low-latency codec — enough to blow past the correction
+// above. There's no reliable way to auto-detect "this is Bluetooth" across
+// browsers (device names aren't guaranteed to say so), so this is a second,
+// larger correction the user opts into via the on-page toggle. Tune this
+// based on real-world testing with the actual hardware being used.
+const MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC = 0.35;
 
 // Separately: the camera's own capture pipeline (sensor -> ISP -> browser)
 // means the *video* frame drawn "now" actually shows a moment slightly in
@@ -68,6 +76,7 @@ const COUNTDOWN = document.getElementById('countdown');
 const RECORD_BTN = document.getElementById('recordBtn');
 const RECORD_LABEL = RECORD_BTN.querySelector('.rec-btn__label');
 const HELPER_TEXT = document.getElementById('helperText');
+const BT_TOGGLE = document.getElementById('btToggle');
 
 const MODAL = document.getElementById('resultModal');
 const MODAL_TITLE = document.getElementById('modalTitle');
@@ -195,6 +204,8 @@ async function initCamera() {
       drawLoopStarted = true;
       scheduleNextFrame();
     }
+
+    detectBluetoothAudioHint();
   } catch (err) {
     console.error('Camera/mic error', err);
     PERMISSION_TEXT.textContent =
@@ -204,6 +215,23 @@ async function initCamera() {
     PERMISSION_RETRY.classList.remove('hidden');
     RECORD_BTN.disabled = true;
   }
+}
+
+// Best-effort only: device labels aren't guaranteed to mention Bluetooth at
+// all (varies by OS/browser), so this can under- or over-detect. It just
+// sets a sensible default for the toggle — the user can always correct it,
+// and nothing here is relied on for correctness.
+function detectBluetoothAudioHint() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  const keywords = ['bluetooth', ' bt ', 'airpods', 'wireless', 'earbud', 'headset', 'hoco'];
+  navigator.mediaDevices.enumerateDevices().then((devices) => {
+    const looksBluetooth = devices.some((d) => {
+      const label = (d.label || '').toLowerCase();
+      return (d.kind === 'audioinput' || d.kind === 'audiooutput') &&
+        keywords.some((kw) => label.includes(kw));
+    });
+    if (looksBluetooth) BT_TOGGLE.checked = true;
+  }).catch(() => {});
 }
 
 // Sizes the on-screen preview frame (exact pixels, not CSS aspect-ratio) and
@@ -825,9 +853,12 @@ function beginRecording(ctx) {
   musicLiveGainNode.connect(ctx.destination); // audible during recording, never ducked, never delayed
 
   // The recorded copy of the music is nudged later to match the mic's
-  // capture latency (see MUSIC_REC_SYNC_DELAY_SEC above).
+  // capture latency (see MUSIC_REC_SYNC_DELAY_SEC above) — a larger
+  // correction if the user has flagged a Bluetooth speaker/mic.
   const musicRecDelay = ctx.createDelay(1.0);
-  musicRecDelay.delayTime.value = MUSIC_REC_SYNC_DELAY_SEC;
+  musicRecDelay.delayTime.value = BT_TOGGLE.checked
+    ? MUSIC_REC_SYNC_DELAY_BLUETOOTH_SEC
+    : MUSIC_REC_SYNC_DELAY_SEC;
   musicRecDelay.connect(recCompressor);
 
   musicRecGainNode = ctx.createGain();
